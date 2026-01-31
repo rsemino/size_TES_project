@@ -2,14 +2,19 @@ import streamlit as st
 import math
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import itertools
 from scipy import interpolate
 
-# --- 1. CONFIGURAZIONE PAGINA ---
+# --- QUESTE DEVONO ESSERE LE PRIME ISTRUZIONI ST ---
 st.set_page_config(page_title="Simulatore i-TES Pro", layout="wide")
-st.set_option('deprecation.showPyplotGlobalUse', False)
+st.set_option('deprecation.showPyplotGlobalUse', False) 
+# ---------------------------------------------------
+
 st.title("🚰 Simulatore i-TES: Curve Reali & Ottimizzazione")
+
+# ... il resto del codice ...
 
 # --- GESTIONE STATO ---
 if 'qty_6' not in st.session_state: st.session_state.qty_6 = 0
