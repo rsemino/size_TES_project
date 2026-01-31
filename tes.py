@@ -8,6 +8,7 @@ from scipy import interpolate
 
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Simulatore i-TES Pro", layout="wide")
+st.set_option('deprecation.showPyplotGlobalUse', False)
 st.title("🚰 Simulatore i-TES: Curve Reali & Ottimizzazione")
 
 # --- GESTIONE STATO ---
