@@ -7,14 +7,10 @@ import plotly.graph_objects as go
 import itertools
 from scipy import interpolate
 
-# --- QUESTE DEVONO ESSERE LE PRIME ISTRUZIONI ST ---
+# --- 1. CONFIGURAZIONE PAGINA (PRIMA ISTRUZIONE STREAMLIT) ---
 st.set_page_config(page_title="Simulatore i-TES Pro", layout="wide")
-st.set_option('deprecation.showPyplotGlobalUse', False) 
-# ---------------------------------------------------
 
 st.title("🚰 Simulatore i-TES: Curve Reali & Ottimizzazione")
-
-# ... il resto del codice ...
 
 # --- GESTIONE STATO ---
 if 'qty_6' not in st.session_state: st.session_state.qty_6 = 0
@@ -366,7 +362,3 @@ with st.expander("📉 Vedi Grafico Normativo EN 806-3", expanded=True):
     )
     
     st.plotly_chart(fig_en, use_container_width=True)
-ax.set_xlabel("LU Totali")
-ax.set_ylabel("Portata [l/s]")
-ax.legend()
-st.pyplot(fig)
