@@ -7,9 +7,8 @@ import plotly.graph_objects as go
 import itertools
 from scipy import interpolate
 
-# --- 1. CONFIGURAZIONE PAGINA (PRIMA ISTRUZIONE STREAMLIT) ---
+# --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Simulatore i-TES Pro", layout="wide")
-
 st.title("🚰 Simulatore i-TES: Curve Reali & Ottimizzazione")
 
 # --- GESTIONE STATO ---
@@ -33,11 +32,12 @@ def manage_qty(key_name, label):
             st.rerun()
 
 # ==========================================
-#  DATABASE
+#  DATABASE PARAMETRI
 # ==========================================
-prices = { 6: 3300.0, 12: 5100.0, 20: 7400.0, 40: 13200.0, 'pdc_per_kw': 0.0 }
+prices = { 6: 3300.0, 12: 5100.0, 20: 7400.0, 40: 13200.0 }
 
-# V0: Litri V40 nominali della sola batteria
+NOMINAL_FLOWS = { 6: 10.0, 12: 20.0, 20: 25.0, 40: 50.0 }
+
 params_v40 = {
     6:  {'V0': 130.0,  'max_lmin': 24.0}, 
     12: {'V0': 260.0,  'max_lmin': 32.0},
@@ -68,6 +68,94 @@ CURVES_DB = {
     },
 }
 
+# ==========================================
+#  DATABASE POMPE DI CALORE (200kW + GAS)
+# ==========================================
+HP_DATABASE = [
+    # --- RESIDENZIALE (R32 / R290 / R410A) ---
+    {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32"},
+    {"brand": "Daikin", "model": "Altherma 3 H HT", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32"},
+    {"brand": "Mitsubishi", "model": "Ecodan Split", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32"},
+    {"brand": "Mitsubishi", "model": "Zubadan", "type": "Aria/Acqua", "kw": 12.0, "gas": "R32"},
+    {"brand": "Vaillant", "model": "aroTHERM plus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290"},
+    {"brand": "Wolf", "model": "CHA-10", "type": "Aria/Acqua", "kw": 10.0, "gas": "R290"},
+    {"brand": "Viessmann", "model": "Vitocal 250-A", "type": "Aria/Acqua", "kw": 10.0, "gas": "R290"},
+    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 9.0, "gas": "R32"},
+    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32"},
+    {"brand": "Samsung", "model": "EHS TDM Plus", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32"},
+    {"brand": "LG", "model": "Therma V Split", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32"},
+    {"brand": "Stiebel Eltron", "model": "WPL 25", "type": "Aria/Acqua", "kw": 14.0, "gas": "R410A"},
+
+    # --- COMMERCIALE / INDUSTRIALE LEGGERO (20 - 80 kW) ---
+    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32"},
+    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 50.0, "gas": "R32"},
+    {"brand": "Mitsubishi", "model": "CAHV-R (Modular)", "type": "Aria/Acqua", "kw": 40.0, "gas": "R454B"},
+    {"brand": "Aermec", "model": "NRK (High Temp)", "type": "Aria/Acqua", "kw": 35.0, "gas": "R410A"},
+    {"brand": "Aermec", "model": "NRK (High Temp)", "type": "Aria/Acqua", "kw": 55.0, "gas": "R410A"},
+    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 45.0, "gas": "R32"},
+    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32"},
+    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 40.0, "gas": "R32"},
+    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32"},
+    {"brand": "Rhoss", "model": "WinPACK", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A"},
+    {"brand": "Rhoss", "model": "WinPACK", "type": "Aria/Acqua", "kw": 65.0, "gas": "R410A"},
+    {"brand": "Panasonic", "model": "ECOi-W", "type": "Aria/Acqua", "kw": 35.0, "gas": "R32"},
+    
+    # --- INDUSTRIALE (80 - 200 kW) ---
+    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 85.0, "gas": "R32"},
+    {"brand": "Daikin", "model": "EWAT-B (Multiscroll)", "type": "Aria/Acqua", "kw": 110.0, "gas": "R32"},
+    {"brand": "Daikin", "model": "EWAT-B (Multiscroll)", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32"},
+    {"brand": "Daikin", "model": "EWAT-B (Multiscroll)", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32"},
+    
+    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 100.0, "gas": "R32"},
+    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32"},
+    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32"},
+
+    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 120.0, "gas": "R32"},
+    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 180.0, "gas": "R32"},
+
+    {"brand": "Aermec", "model": "NRB", "type": "Aria/Acqua", "kw": 100.0, "gas": "R410A"},
+    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32"},
+    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32"},
+    
+    {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 110.0, "gas": "R454B"},
+    {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 160.0, "gas": "R454B"},
+    {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 210.0, "gas": "R454B"},
+
+    # --- GEOTERMICHE / ACQUA-ACQUA (fino a 200 kW) ---
+    {"brand": "Daikin", "model": "Altherma 3 GEO", "type": "Acqua/Acqua", "kw": 10.0, "gas": "R32"},
+    {"brand": "Nibe", "model": "S1155", "type": "Acqua/Acqua", "kw": 12.0, "gas": "R407C"},
+    {"brand": "Viessmann", "model": "Vitocal 300-G", "type": "Acqua/Acqua", "kw": 17.0, "gas": "R410A"},
+    {"brand": "Daikin", "model": "EWWD (Water Cooled)", "type": "Acqua/Acqua", "kw": 50.0, "gas": "R410A"},
+    {"brand": "Daikin", "model": "EWWD (Water Cooled)", "type": "Acqua/Acqua", "kw": 90.0, "gas": "R410A"},
+    {"brand": "Daikin", "model": "EWWD (Water Cooled)", "type": "Acqua/Acqua", "kw": 150.0, "gas": "R134a"},
+    {"brand": "Daikin", "model": "EWWD (Water Cooled)", "type": "Acqua/Acqua", "kw": 190.0, "gas": "R134a"},
+    {"brand": "Aermec", "model": "WRL", "type": "Acqua/Acqua", "kw": 80.0, "gas": "R410A"},
+    {"brand": "Aermec", "model": "WRL", "type": "Acqua/Acqua", "kw": 150.0, "gas": "R410A"},
+    {"brand": "Clivet", "model": "WSH-XEE", "type": "Acqua/Acqua", "kw": 100.0, "gas": "R410A"},
+]
+
+def get_suggested_hp(target_kw):
+    """Restituisce le PdC che coprono il target_kw."""
+    if target_kw <= 0: return [], []
+    
+    air_water = []
+    water_water = []
+    
+    for hp in HP_DATABASE:
+        # Logica flessibile: Accettiamo macchine fino a un po' meno del target (se si usano multiple)
+        # o un po' di più. Qui filtriamo per >= target (soluzione singola)
+        if hp['kw'] >= target_kw:
+             if hp['type'] == "Aria/Acqua":
+                 air_water.append(hp)
+             else:
+                 water_water.append(hp)
+    
+    air_water.sort(key=lambda x: x['kw'])
+    water_water.sort(key=lambda x: x['kw'])
+    
+    # Restituisce più risultati per dare varietà
+    return air_water[:15], water_water[:10]
+
 # --- FUNZIONI DI CALCOLO ---
 def calcola_qd_en806(total_lu, max_single_lu):
     max_single_qa = max_single_lu * 0.1 
@@ -83,9 +171,6 @@ def calcola_qd_en806(total_lu, max_single_lu):
         return math.exp(y1 + m * (math.log(total_lu) - x1))
 
 def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
-    """
-    Calcola le curve del sistema.
-    """
     interpolators_p = {}
     interpolators_t = {}
     limits = {}
@@ -102,20 +187,16 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
 
     if not interpolators_p: return [], [], [], []
 
-    # Range portate da visualizzare
     alpha_values = np.linspace(0.01, 1.1, 50) 
-    
     sys_flows, sys_powers, sys_temps, sys_v40_volumes = [], [], [], []
     
     for alpha in alpha_values:
         f_tot, p_tot_batt, weighted_temp_sum = 0, 0, 0
-        
         for qty, size in config:
             if qty > 0:
                 f_single = limits[size] * alpha
                 p_single = float(interpolators_p[size](f_single))
                 t_single = float(interpolators_t[size](f_single))
-                
                 f_block = f_single * qty
                 f_tot += f_block
                 p_tot_batt += (p_single * qty)
@@ -126,15 +207,12 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
         t_mix = weighted_temp_sum / f_tot if f_tot > 0 else 0
         sys_temps.append(t_mix)
         
-        # --- CALCOLO CURVA V40 ---
         p_req_at_flow = f_tot * dt_calc * 0.0697
         p_deficit = p_req_at_flow - p_hp_tot
-        
         if p_deficit > 0:
             v40_vol = (e_tot_e0 / p_deficit) * 60 * f_tot
         else:
             v40_vol = 99999 
-            
         sys_v40_volumes.append(v40_vol)
         
     return sys_flows, sys_powers, sys_temps, sys_v40_volumes
@@ -163,9 +241,7 @@ with st.sidebar.expander("🏗️ 1. Utenze (LU)", expanded=False):
     st.info(f"Target: **{qp_lmin_target:.1f} L/min**")
 
 st.sidebar.subheader("🔥 2. Generazione")
-p_hp = st.sidebar.number_input("Potenza PdC (kW)", value=10.0, step=1.0, format="%.0f")
-n_hp = st.sidebar.number_input("Numero PdC", value=1, min_value=1)
-p_hp_tot_input = p_hp * n_hp
+recharge_min = st.sidebar.number_input("Tempo Reintegro Target (min)", value=60, step=10, min_value=1)
 
 with st.sidebar.expander("🔋 3. Batterie", expanded=True):
     manage_qty('qty_6', "i-6")
@@ -178,61 +254,109 @@ with st.sidebar.expander("🔋 3. Batterie", expanded=True):
     st.markdown("---")
     t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True)
 
-    if st.button("🚀 OTTIMIZZA COSTI"):
-        st.toast("Calcolo...", icon="⏳")
+    # --- OTTIMIZZATORE ---
+    st.markdown("### 🛠️ Ottimizzatore")
+    flow_correction_pct = st.number_input("Coeff. Correzione Portata (%)", value=0, step=1)
+    
+    if st.button("🚀 OTTIMIZZA (Min. Batterie)"):
+        st.toast("Ricerca configurazione...", icon="⏳")
         req_flow = qp_lmin_target
-        best_cost = float('inf'); best_cfg = None
-        max_search = int(req_flow / 10) + 2
-        for q40, q20, q12, q6 in itertools.product(range(max_search if max_search < 5 else 6), range(6), range(10), range(6)):
+        best_count = float('inf'); best_cost = float('inf'); best_cfg = None
+        max_search = 6
+        
+        for q40, q20, q12, q6 in itertools.product(range(max_search), range(max_search), range(max_search), range(max_search)):
             if q40==0 and q20==0 and q12==0 and q6==0: continue
-            f_sys = (q6 * 24) + (q12 * 32) + (q20 * 40) + (q40 * 80)
-            if f_sys >= req_flow:
+            
+            nom_flow_tot = (q6 * NOMINAL_FLOWS[6]) + (q12 * NOMINAL_FLOWS[12]) + (q20 * NOMINAL_FLOWS[20]) + (q40 * NOMINAL_FLOWS[40])
+            effective_flow = nom_flow_tot * (1 + flow_correction_pct / 100.0)
+            
+            if effective_flow >= req_flow:
+                curr_count = q6 + q12 + q20 + q40
                 curr_cost = (q6*prices[6]) + (q12*prices[12]) + (q20*prices[20]) + (q40*prices[40])
-                if curr_cost < best_cost:
+                if curr_count < best_count:
+                    best_count = curr_count
                     best_cost = curr_cost
                     best_cfg = (q6, q12, q20, q40)
+                elif curr_count == best_count:
+                    if curr_cost < best_cost:
+                        best_cost = curr_cost
+                        best_cfg = (q6, q12, q20, q40)
+        
         if best_cfg:
             st.session_state.qty_6, st.session_state.qty_12 = best_cfg[0], best_cfg[1]
             st.session_state.qty_20, st.session_state.qty_40 = best_cfg[2], best_cfg[3]
-            st.success(f"Ottimizzato: €{best_cost:,.0f}")
+            st.success(f"Trovato: {sum(best_cfg)} Batterie (Cost: €{best_cost:,.0f})")
             st.rerun()
+        else:
+            st.error("Nessuna combinazione trovata.")
 
 # --- CALCOLI PRINCIPALI ---
 config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
           (st.session_state.qty_20, 20), (st.session_state.qty_40, 40)]
 total_cost = sum(q*prices[s] for q,s in config)
 
-# 1. Calcolo Energia Totale (E0)
+# 1. Energia Totale
 total_energy_e0 = 0
 for qty, size in config:
     v0_nominal = params_v40[size]['V0']
     if t_pcm >= 58: v0_nominal /= 0.76 
-    # E0 = V0 * 4.186 * dt / 3600
     e0_single = (v0_nominal * 4.186 * dt_target) / 3600.0
     total_energy_e0 += (e0_single * qty)
 
-# 2. Potenza Carico Richiesta
+# 2. Potenza PdC
+recharge_hours = recharge_min / 60.0
+p_hp_tot_input = total_energy_e0 / recharge_hours if recharge_hours > 0 and total_energy_e0 > 0 else 0.0
+
+# 3. Potenza Carico
 p_load = qp_lmin_target * dt_target * 0.0697
 p_req_batt = max(0, p_load - p_hp_tot_input)
 
-# 3. Calcolo Volume V40 Totale (Puntuale)
+# 4. Volume V40 Totale e Autonomia
 net_power_deficit = p_load - p_hp_tot_input
 if net_power_deficit > 0.1:
     total_v40_liters = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
+    autonomy_min = total_v40_liters / qp_lmin_target if qp_lmin_target > 0 else 0
+    autonomy_str = f"{autonomy_min:.1f} min"
 else:
-    total_v40_liters = 99999 
+    total_v40_liters = 99999
+    autonomy_str = "∞ (Illimitata)"
 
 # --- VISUALIZZAZIONE ---
 st.subheader("📊 Analisi Prestazioni")
-k1, k2, k3, k4 = st.columns(4)
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 k1.metric("Portata Target", f"{qp_lmin_target:.1f} L/min")
-k2.metric(f"Salto Termico", f"{dt_target:.1f} °C")
-k3.metric("Potenza Batt. Richiesta", f"{p_req_batt:.1f} kW")
-k4.metric("Costo Batterie", f"€ {total_cost:,.0f}")
+k2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota coperta dalla batteria")
+k3.metric("Autonomia", autonomy_str, help="Durata alla portata di picco")
+k4.metric("Potenza PdC Calc.", f"{p_hp_tot_input:.1f} kW", help=f"Necessaria per ricarica in {recharge_min} min")
+k5.metric("Costo Batterie", f"€ {total_cost:,.0f}")
+k6.metric(f"Salto Termico", f"{dt_target:.1f} °C")
+
+# --- SUGGERIMENTO POMPE DI CALORE ---
+sugg_air, sugg_water = get_suggested_hp(p_hp_tot_input)
+
+if p_hp_tot_input > 0:
+    st.markdown("### 🔍 Suggerimento Pompe di Calore (Multi-Brand)")
+    sc1, sc2 = st.columns(2)
+    
+    with sc1:
+        st.markdown("**🌬️ Aria / Acqua**")
+        if sugg_air:
+            for hp in sugg_air:
+                st.info(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}]")
+        else:
+            st.warning("Nessun modello standard trovato (>200kW o troppo bassa).")
+
+    with sc2:
+        st.markdown("**💧 Acqua / Acqua (Geotermiche / Loop)**")
+        if sugg_water:
+            for hp in sugg_water:
+                st.success(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}]")
+        else:
+            st.warning("Nessun modello standard trovato.")
 
 st.divider()
 
-# --- GRAFICI INTERATTIVI (PLOTLY) ---
+# --- GRAFICI INTERATTIVI ---
 sys_flows, sys_powers, sys_temps, sys_v40_volumes = get_system_curves(config, t_pcm, dt_target, p_hp_tot_input, total_energy_e0)
 
 if len(sys_flows) > 0:
@@ -263,36 +387,14 @@ if len(sys_flows) > 0:
     with col_g3:
         st.subheader("💧 Volume V40 Totale")
         fig3 = go.Figure()
-        
         display_max_y = 10000 
         plot_v40_vol = [min(v, display_max_y) for v in sys_v40_volumes]
-        
-        fig3.add_trace(go.Scatter(
-            x=sys_flows, y=plot_v40_vol,
-            mode='lines',
-            line=dict(color='#457b9d', width=2),
-            name='Volume Disponibile',
-            hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'
-        ))
-        
+        fig3.add_trace(go.Scatter(x=sys_flows, y=plot_v40_vol, mode='lines', line=dict(color='#457b9d', width=2), name='Volume Disponibile', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
         pt_v40_vis = min(total_v40_liters, display_max_y)
         label_v40 = f"{total_v40_liters:.0f} L" if total_v40_liters < 9000 else "> 9000 L"
-        
-        fig3.add_trace(go.Scatter(
-            x=[qp_lmin_target], y=[pt_v40_vis],
-            mode='markers',
-            marker=dict(color='purple', size=14, line=dict(color='black', width=2)),
-            name='Punto Lavoro',
-            hovertemplate=f'<b>Punto Lavoro</b><br>Portata: %{{x:.1f}} L/min<br>Volume: {label_v40}<extra></extra>'
-        ))
-        
-        fig3.update_layout(
-            xaxis_title="Portata (L/min)", yaxis_title="Volume V40 (Litri)",
-            margin=dict(l=20,r=20,t=30,b=20), height=350,
-            yaxis=dict(range=[0, min(max(plot_v40_vol)*1.1, display_max_y)])
-        )
+        fig3.add_trace(go.Scatter(x=[qp_lmin_target], y=[pt_v40_vis], mode='markers', marker=dict(color='purple', size=14, line=dict(color='black', width=2)), name='Punto Lavoro', hovertemplate=f'<b>Punto Lavoro</b><br>Portata: %{{x:.1f}} L/min<br>Volume: {label_v40}<extra></extra>'))
+        fig3.update_layout(xaxis_title="Portata (L/min)", yaxis_title="Volume V40 (Litri)", margin=dict(l=20,r=20,t=30,b=20), height=350, yaxis=dict(range=[0, min(max(plot_v40_vol)*1.1, display_max_y)]))
         st.plotly_chart(fig3, use_container_width=True)
-
 else:
     st.warning("Aggiungi batterie per vedere i grafici.")
 
@@ -324,41 +426,12 @@ if table_rows:
 </table></div>"""
     st.markdown(full_table_html, unsafe_allow_html=True)
 
-# --- GRAFICO EN 806-3 INTERATTIVO (PLOTLY) ---
+# --- GRAFICO EN 806-3 ---
 with st.expander("📉 Vedi Grafico Normativo EN 806-3", expanded=True):
-    # Generazione dati
     x_vals = np.logspace(0, 3, 100)
     y_vals = [calcola_qd_en806(x, max_lu_unit) for x in x_vals]
-    
     fig_en = go.Figure()
-
-    # Curva Blu
-    fig_en.add_trace(go.Scatter(
-        x=x_vals, y=y_vals,
-        mode='lines',
-        name='Curva Normativa',
-        line=dict(color='#007acc', width=3),
-        hovertemplate='LU: %{x:.1f}<br>Portata: %{y:.2f} l/s<extra></extra>'
-    ))
-
-    # Punto Rosso
-    fig_en.add_trace(go.Scatter(
-        x=[lu_totali], y=[qd_ls_target],
-        mode='markers',
-        name='Punto Progetto',
-        marker=dict(color='red', size=15, line=dict(color='black', width=2)),
-        hovertemplate='<b>IL TUO PROGETTO</b><br>Totale LU: %{x:.0f}<br>Portata Target: %{y:.2f} l/s<extra></extra>'
-    ))
-
-    # Layout Logaritmico
-    fig_en.update_layout(
-        xaxis_type="log",
-        yaxis_type="log",
-        xaxis_title="Load Units Totali (LU)",
-        yaxis_title="Portata di Progetto (l/s)",
-        margin=dict(l=20, r=20, t=30, b=20),
-        height=400,
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
-    )
-    
+    fig_en.add_trace(go.Scatter(x=x_vals, y=y_vals, mode='lines', name='Curva Normativa', line=dict(color='#007acc', width=3), hovertemplate='LU: %{x:.1f}<br>Portata: %{y:.2f} l/s<extra></extra>'))
+    fig_en.add_trace(go.Scatter(x=[lu_totali], y=[qd_ls_target], mode='markers', name='Punto Progetto', marker=dict(color='red', size=15, line=dict(color='black', width=2)), hovertemplate='<b>IL TUO PROGETTO</b><br>Totale LU: %{x:.0f}<br>Portata Target: %{y:.2f} l/s<extra></extra>'))
+    fig_en.update_layout(xaxis_type="log", yaxis_type="log", xaxis_title="Load Units Totali (LU)", yaxis_title="Portata di Progetto (l/s)", margin=dict(l=20, r=20, t=30, b=20), height=400, legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
     st.plotly_chart(fig_en, use_container_width=True)
