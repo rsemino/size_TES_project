@@ -69,82 +69,103 @@ CURVES_DB = {
 }
 
 # ==========================================
-#  DATABASE POMPE DI CALORE (200kW + GAS)
+#  DATABASE POMPE DI CALORE (200kW + GAS + CLIMER COMPLETA)
 # ==========================================
 HP_DATABASE = [
-    # --- RESIDENZIALE (R32 / R290 / R410A) ---
-    {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32"},
-    {"brand": "Daikin", "model": "Altherma 3 H HT", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32"},
-    {"brand": "Mitsubishi", "model": "Ecodan Split", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32"},
-    {"brand": "Mitsubishi", "model": "Zubadan", "type": "Aria/Acqua", "kw": 12.0, "gas": "R32"},
-    {"brand": "Vaillant", "model": "aroTHERM plus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290"},
-    {"brand": "Wolf", "model": "CHA-10", "type": "Aria/Acqua", "kw": 10.0, "gas": "R290"},
-    {"brand": "Viessmann", "model": "Vitocal 250-A", "type": "Aria/Acqua", "kw": 10.0, "gas": "R290"},
-    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 9.0, "gas": "R32"},
-    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32"},
-    {"brand": "Samsung", "model": "EHS TDM Plus", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32"},
-    {"brand": "LG", "model": "Therma V Split", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32"},
-    {"brand": "Stiebel Eltron", "model": "WPL 25", "type": "Aria/Acqua", "kw": 14.0, "gas": "R410A"},
+    # --- CLIMER ECOFLEX (Serie Split per ACS esistente) ---
+    # EF02 corrisponde tipicamente alla taglia piccola (approx 2-2.5 kW termici medi)
+    {"brand": "Climer", "model": "EcoFlex EF02", "type": "Aria/Acqua", "kw": 2.2, "gas": "R134a/R513A", "price": 2600},
+    # EF04 corrisponde alla taglia superiore (approx 3.5-4 kW termici medi)
+    {"brand": "Climer", "model": "EcoFlex EF04", "type": "Aria/Acqua", "kw": 3.8, "gas": "R134a/R513A", "price": 3100},
 
-    # --- COMMERCIALE / INDUSTRIALE LEGGERO (20 - 80 kW) ---
-    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32"},
-    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 50.0, "gas": "R32"},
-    {"brand": "Mitsubishi", "model": "CAHV-R (Modular)", "type": "Aria/Acqua", "kw": 40.0, "gas": "R454B"},
-    {"brand": "Aermec", "model": "NRK (High Temp)", "type": "Aria/Acqua", "kw": 35.0, "gas": "R410A"},
-    {"brand": "Aermec", "model": "NRK (High Temp)", "type": "Aria/Acqua", "kw": 55.0, "gas": "R410A"},
-    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 45.0, "gas": "R32"},
-    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32"},
-    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 40.0, "gas": "R32"},
-    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32"},
-    {"brand": "Rhoss", "model": "WinPACK", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A"},
-    {"brand": "Rhoss", "model": "WinPACK", "type": "Aria/Acqua", "kw": 65.0, "gas": "R410A"},
-    {"brand": "Panasonic", "model": "ECOi-W", "type": "Aria/Acqua", "kw": 35.0, "gas": "R32"},
+    # --- ALTRE PICCOLE TAGLIE (< 4 kW) ---
+    {"brand": "Panasonic", "model": "Aquarea (J Gen)", "type": "Aria/Acqua", "kw": 3.2, "gas": "R32", "price": 3900},
+    {"brand": "Climer", "model": "EcoHeat", "type": "Aria/Acqua", "kw": 3.5, "gas": "R290", "price": 3500},
+    
+    # --- RESIDENZIALE STANDARD (4 - 16 kW) ---
+    {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 8.0, "gas": "R290", "price": 5200},
+    {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290", "price": 6800},
+    {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 4.0, "gas": "R32", "price": 4200},
+    {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32", "price": 4500},
+    {"brand": "Daikin", "model": "Altherma 3 H HT", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32", "price": 9800},
+    {"brand": "Mitsubishi", "model": "Ecodan Split", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32", "price": 4200},
+    {"brand": "Mitsubishi", "model": "Zubadan", "type": "Aria/Acqua", "kw": 12.0, "gas": "R32", "price": 6800},
+    {"brand": "Vaillant", "model": "aroTHERM plus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290", "price": 7500},
+    {"brand": "Wolf", "model": "CHA-10", "type": "Aria/Acqua", "kw": 10.0, "gas": "R290", "price": 8200},
+    {"brand": "Viessmann", "model": "Vitocal 250-A", "type": "Aria/Acqua", "kw": 10.0, "gas": "R290", "price": 7900},
+    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 9.0, "gas": "R32", "price": 5400},
+    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32", "price": 8500},
+    {"brand": "Samsung", "model": "EHS TDM Plus", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32", "price": 6200},
+    {"brand": "LG", "model": "Therma V Split", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32", "price": 6500},
+    {"brand": "Stiebel Eltron", "model": "WPL 25", "type": "Aria/Acqua", "kw": 14.0, "gas": "R410A", "price": 9500},
+
+    # --- COMMERCIALE / INDUSTRIALE LEGGERO (16 - 80 kW) ---
+    {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 18.0, "gas": "R410A", "price": 9500},
+    {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 13000},
+    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32", "price": 11000},
+    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 50.0, "gas": "R32", "price": 18500},
+    {"brand": "Mitsubishi", "model": "CAHV-R (Modular)", "type": "Aria/Acqua", "kw": 40.0, "gas": "R454B", "price": 16000},
+    {"brand": "Aermec", "model": "NRK (High Temp)", "type": "Aria/Acqua", "kw": 35.0, "gas": "R410A", "price": 14500},
+    {"brand": "Aermec", "model": "NRK (High Temp)", "type": "Aria/Acqua", "kw": 55.0, "gas": "R410A", "price": 21000},
+    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 45.0, "gas": "R32", "price": 17000},
+    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32", "price": 24000},
+    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 40.0, "gas": "R32", "price": 15500},
+    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32", "price": 25000},
+    {"brand": "Rhoss", "model": "WinPACK", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 12000},
     
     # --- INDUSTRIALE (80 - 200 kW) ---
-    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 85.0, "gas": "R32"},
-    {"brand": "Daikin", "model": "EWAT-B (Multiscroll)", "type": "Aria/Acqua", "kw": 110.0, "gas": "R32"},
-    {"brand": "Daikin", "model": "EWAT-B (Multiscroll)", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32"},
-    {"brand": "Daikin", "model": "EWAT-B (Multiscroll)", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32"},
+    {"brand": "Climer", "model": "H Series", "type": "Aria/Acqua", "kw": 90.0, "gas": "R410A", "price": 28000},
+    {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 85.0, "gas": "R32", "price": 29000},
+    {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 110.0, "gas": "R32", "price": 36000},
+    {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 45000},
+    {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 58000},
     
-    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 100.0, "gas": "R32"},
-    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32"},
-    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32"},
+    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 100.0, "gas": "R32", "price": 34000},
+    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 46000},
+    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 59000},
 
-    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 120.0, "gas": "R32"},
-    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 180.0, "gas": "R32"},
+    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 120.0, "gas": "R32", "price": 38000},
+    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 180.0, "gas": "R32", "price": 52000},
 
-    {"brand": "Aermec", "model": "NRB", "type": "Aria/Acqua", "kw": 100.0, "gas": "R410A"},
-    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32"},
-    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32"},
+    {"brand": "Aermec", "model": "NRB", "type": "Aria/Acqua", "kw": 100.0, "gas": "R410A", "price": 31000},
+    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 47000},
+    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 59000},
     
     {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 110.0, "gas": "R454B"},
     {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 160.0, "gas": "R454B"},
     {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 210.0, "gas": "R454B"},
 
-    # --- GEOTERMICHE / ACQUA-ACQUA (fino a 200 kW) ---
-    {"brand": "Daikin", "model": "Altherma 3 GEO", "type": "Acqua/Acqua", "kw": 10.0, "gas": "R32"},
-    {"brand": "Nibe", "model": "S1155", "type": "Acqua/Acqua", "kw": 12.0, "gas": "R407C"},
-    {"brand": "Viessmann", "model": "Vitocal 300-G", "type": "Acqua/Acqua", "kw": 17.0, "gas": "R410A"},
-    {"brand": "Daikin", "model": "EWWD (Water Cooled)", "type": "Acqua/Acqua", "kw": 50.0, "gas": "R410A"},
-    {"brand": "Daikin", "model": "EWWD (Water Cooled)", "type": "Acqua/Acqua", "kw": 90.0, "gas": "R410A"},
-    {"brand": "Daikin", "model": "EWWD (Water Cooled)", "type": "Acqua/Acqua", "kw": 150.0, "gas": "R134a"},
-    {"brand": "Daikin", "model": "EWWD (Water Cooled)", "type": "Acqua/Acqua", "kw": 190.0, "gas": "R134a"},
-    {"brand": "Aermec", "model": "WRL", "type": "Acqua/Acqua", "kw": 80.0, "gas": "R410A"},
+    # --- GEOTERMICHE / ACQUA-ACQUA ---
+    {"brand": "Daikin", "model": "Altherma 3 GEO", "type": "Acqua/Acqua", "kw": 10.0, "gas": "R32", "price": 9500},
+    {"brand": "Nibe", "model": "S1155", "type": "Acqua/Acqua", "kw": 12.0, "gas": "R407C", "price": 11000},
+    {"brand": "Viessmann", "model": "Vitocal 300-G", "type": "Acqua/Acqua", "kw": 17.0, "gas": "R410A", "price": 13000},
+    {"brand": "Daikin", "model": "EWWD", "type": "Acqua/Acqua", "kw": 50.0, "gas": "R410A", "price": 22000},
+    {"brand": "Daikin", "model": "EWWD", "type": "Acqua/Acqua", "kw": 90.0, "gas": "R410A", "price": 32000},
+    {"brand": "Daikin", "model": "EWWD", "type": "Acqua/Acqua", "kw": 150.0, "gas": "R134a"},
+    {"brand": "Daikin", "model": "EWWD", "type": "Acqua/Acqua", "kw": 190.0, "gas": "R134a"},
+    {"brand": "Aermec", "model": "WRL", "type": "Acqua/Acqua", "kw": 80.0, "gas": "R410A", "price": 28000},
     {"brand": "Aermec", "model": "WRL", "type": "Acqua/Acqua", "kw": 150.0, "gas": "R410A"},
-    {"brand": "Clivet", "model": "WSH-XEE", "type": "Acqua/Acqua", "kw": 100.0, "gas": "R410A"},
+    {"brand": "Clivet", "model": "WSH-XEE", "type": "Acqua/Acqua", "kw": 100.0, "gas": "R410A", "price": 35000},
 ]
 
 def get_suggested_hp(target_kw):
-    """Restituisce le PdC che coprono il target_kw."""
+    """
+    Restituisce le PdC che coprono il target_kw.
+    FILTRO: Mostra solo macchine con potenza >= target E < target + 10kW.
+    SE target_kw < 3.0 kW (molto basso), abbassa il filtro per mostrare le entry-level.
+    """
     if target_kw <= 0: return [], []
     
     air_water = []
     water_water = []
     
+    # Se il target è bassissimo (es. 1kW), cerca comunque macchine piccole (fino a 10kW)
+    search_min = target_kw if target_kw > 3.0 else 0.0
+    # Limite superiore: target + 10kW, ma se il target è basso, almeno fino a 8kW per trovare qualcosa
+    limit_upper = max(target_kw + 10.0, 8.0)
+
     for hp in HP_DATABASE:
-        # Logica flessibile: Accettiamo macchine fino a un po' meno del target (se si usano multiple)
-        # o un po' di più. Qui filtriamo per >= target (soluzione singola)
-        if hp['kw'] >= target_kw:
+        if search_min <= hp['kw'] < limit_upper:
              if hp['type'] == "Aria/Acqua":
                  air_water.append(hp)
              else:
@@ -153,8 +174,7 @@ def get_suggested_hp(target_kw):
     air_water.sort(key=lambda x: x['kw'])
     water_water.sort(key=lambda x: x['kw'])
     
-    # Restituisce più risultati per dare varietà
-    return air_water[:15], water_water[:10]
+    return air_water, water_water
 
 # --- FUNZIONI DI CALCOLO ---
 def calcola_qd_en806(total_lu, max_single_lu):
@@ -321,20 +341,51 @@ else:
     total_v40_liters = 99999
     autonomy_str = "∞ (Illimitata)"
 
+# --- PREPARAZIONE METRICHE COSTI E HP ---
+cost_tooltip = "DETTAGLIO COSTI:\n"
+if total_cost > 0:
+    for qty, size in config:
+        if qty > 0:
+            sub = qty * prices[size]
+            cost_tooltip += f"- {qty}x i-{size}: € {sub:,.0f}\n"
+    cost_tooltip += f"\nTOTALE: € {total_cost:,.0f}"
+else:
+    cost_tooltip = "Nessuna batteria selezionata"
+
+# Calcolo Costo Migliore PdC
+sugg_air, sugg_water = get_suggested_hp(p_hp_tot_input)
+all_sugg = sugg_air + sugg_water
+
+hp_cost_disp = "N/A"
+hp_tooltip = "Nessuna pompa di calore trovata nel range specificato."
+
+if all_sugg:
+    # Troviamo la PdC con il prezzo minore
+    best_hp = min(all_sugg, key=lambda x: x.get('price', float('inf')))
+    hp_cost_disp = f"€ {best_hp['price']:,.0f}"
+    hp_tooltip = f"MIGLIOR PREZZO:\n{best_hp['brand']} {best_hp['model']}\nPotenza: {best_hp['kw']} kW\nGas: {best_hp['gas']}"
+
 # --- VISUALIZZAZIONE ---
 st.subheader("📊 Analisi Prestazioni")
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-k1.metric("Portata Target", f"{qp_lmin_target:.1f} L/min")
-k2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota coperta dalla batteria")
-k3.metric("Autonomia", autonomy_str, help="Durata alla portata di picco")
-k4.metric("Potenza PdC Calc.", f"{p_hp_tot_input:.1f} kW", help=f"Necessaria per ricarica in {recharge_min} min")
-k5.metric("Costo Batterie", f"€ {total_cost:,.0f}")
-k6.metric(f"Salto Termico", f"{dt_target:.1f} °C")
+
+# Nuova disposizione a griglia
+# RIGA 1
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Portata Target", f"{qp_lmin_target:.1f} L/min")
+c2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota coperta dalla batteria")
+c3.metric("Autonomia", autonomy_str, help="Durata alla portata di picco")
+c4.metric("Costo Batterie", f"€ {total_cost:,.0f}", help=cost_tooltip)
+
+# RIGA 2
+c1b, c2b, c3b, c4b = st.columns(4)
+c1b.metric(f"Salto Termico", f"{dt_target:.1f} °C")
+c2b.metric("Potenza PdC Calc.", f"{p_hp_tot_input:.1f} kW", help=f"Necessaria per ricarica in {recharge_min} min")
+val_v40_disp = f"{total_v40_liters:.0f} L" if total_v40_liters < 99999 else "∞"
+c3b.metric("Volume V40 Totale", val_v40_disp)
+c4b.metric("Costo PdC (Min)", hp_cost_disp, help=hp_tooltip)
 
 # --- SUGGERIMENTO POMPE DI CALORE ---
-sugg_air, sugg_water = get_suggested_hp(p_hp_tot_input)
-
-if p_hp_tot_input > 0:
+if p_hp_tot_input > 0 or p_hp_tot_input == 0: 
     st.markdown("### 🔍 Suggerimento Pompe di Calore (Multi-Brand)")
     sc1, sc2 = st.columns(2)
     
@@ -342,17 +393,19 @@ if p_hp_tot_input > 0:
         st.markdown("**🌬️ Aria / Acqua**")
         if sugg_air:
             for hp in sugg_air:
-                st.info(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}]")
+                price_disp = f"€ {hp['price']:,.0f}" if 'price' in hp else "N/A"
+                st.info(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}] | Est.: {price_disp}")
         else:
-            st.warning("Nessun modello standard trovato (>200kW o troppo bassa).")
+            st.warning("Nessun modello trovato in questo range.")
 
     with sc2:
         st.markdown("**💧 Acqua / Acqua (Geotermiche / Loop)**")
         if sugg_water:
             for hp in sugg_water:
-                st.success(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}]")
+                price_disp = f"€ {hp['price']:,.0f}" if 'price' in hp else "N/A"
+                st.success(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}] | Est.: {price_disp}")
         else:
-            st.warning("Nessun modello standard trovato.")
+            st.warning("Nessun modello trovato in questo range.")
 
 st.divider()
 
@@ -400,30 +453,44 @@ else:
 
 st.divider()
 
-# --- TABELLA MIX BATTERIE ---
+# --- TABELLA MIX BATTERIE AGGIORNATA ---
 table_rows = ""
 for qty, size in config:
     if qty > 0:
+        nom_flow = NOMINAL_FLOWS[size]
+        nom_power = (nom_flow * dt_target * 4.186) / 60.0
         last_pt = CURVES_DB[size][t_pcm][-1]
         f_max = last_pt[0] * qty
         p_max = last_pt[1] * qty
-        table_rows += f"<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 12px; font-weight:bold; font-size:18px;'>i-{size}</td><td style='padding: 12px; font-size:18px; color:#2a9d8f; font-weight:bold;'>{qty} pz</td><td style='padding: 12px; font-size:18px;'>{p_max:.1f} kW</td><td style='padding: 12px; font-size:18px;'>{f_max:.1f} L/min</td></tr>"
+        u_price = prices[size]
+        t_price = u_price * qty
+        table_rows += f"""<tr style='border-bottom: 1px solid #eee;'>
+            <td style='padding: 10px; font-weight:bold;'>i-{size}</td>
+            <td style='padding: 10px; text-align:center;'>{qty}</td>
+            <td style='padding: 10px; text-align:right;'>{nom_flow:.1f} L/min</td>
+            <td style='padding: 10px; text-align:right;'>{nom_power:.1f} kW</td>
+            <td style='padding: 10px; text-align:right; color:#666;'>{f_max:.1f} L/min</td>
+            <td style='padding: 10px; text-align:right; color:#666;'>{p_max:.1f} kW</td>
+            <td style='padding: 10px; text-align:right;'>€ {u_price:,.0f}</td>
+            <td style='padding: 10px; text-align:right; font-weight:bold;'>€ {t_price:,.0f}</td>
+        </tr>"""
+
+if total_cost > 0:
+    table_rows += f"""<tr style='background-color:#e9ecef; font-weight:bold; border-top: 2px solid #2a9d8f;'>
+        <td colspan="7" style='padding: 12px; text-align:right;'>TOTALE</td>
+        <td style='padding: 12px; text-align:right; color:#2a9d8f;'>€ {total_cost:,.0f}</td>
+    </tr>"""
 
 if table_rows:
-    full_table_html = f"""
-<div style="background-color:#f8f9fa; padding:20px; border-radius:10px; border:1px solid #ddd; margin-bottom: 20px;">
-<h3 style="margin-top:0; color:#333; border-bottom: 2px solid #2a9d8f; padding-bottom:10px;">🧩 Dettaglio Contributo Batterie (Max)</h3>
-<table style="width:100%; text-align:left; border-collapse: collapse;">
-<thead>
-<tr style="background-color:#e9ecef; color:#444;">
-<th style="padding: 12px; font-size:16px;">Modello</th>
-<th style="padding: 12px; font-size:16px;">Quantità</th>
-<th style="padding: 12px; font-size:16px;">Potenza Max</th>
-<th style="padding: 12px; font-size:16px;">Portata Max</th>
-</tr>
-</thead>
-<tbody>{table_rows}</tbody>
-</table></div>"""
+    full_table_html = f"""<div style="background-color:#f8f9fa; padding:20px; border-radius:10px; border:1px solid #ddd; margin-bottom: 20px;">
+    <h3 style="margin-top:0; color:#333; border-bottom: 2px solid #2a9d8f; padding-bottom:10px;">🧩 Dettaglio Contributo Batterie</h3>
+    <table style="width:100%; text-align:left; border-collapse: collapse;">
+    <thead><tr style="background-color:#e9ecef; color:#444; font-size:14px;">
+    <th style="padding: 10px;">Modello</th><th style="padding: 10px; text-align:center;">Q.tà</th>
+    <th style="padding: 10px; text-align:right;">Portata Nom.</th><th style="padding: 10px; text-align:right;">Potenza Nom.</th>
+    <th style="padding: 10px; text-align:right;">Portata Max</th><th style="padding: 10px; text-align:right;">Potenza Max</th>
+    <th style="padding: 10px; text-align:right;">Prezzo Unit.</th><th style="padding: 10px; text-align:right;">Subtotale</th>
+    </tr></thead><tbody>{table_rows}</tbody></table></div>"""
     st.markdown(full_table_html, unsafe_allow_html=True)
 
 # --- GRAFICO EN 806-3 ---
