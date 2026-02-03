@@ -70,7 +70,7 @@ CURVES_DB = {
 }
 
 HP_DATABASE = [
-    # --- CLIMER ECOFLEX (Nuova Famiglia) ---
+    # --- CLIMER ECOFLEX ---
     {"brand": "Climer", "model": "EcoFlex 150", "type": "Aria/Acqua", "kw": 1.8, "gas": "R290", "price": 2800},
     {"brand": "Climer", "model": "EcoFlex 200", "type": "Aria/Acqua", "kw": 2.2, "gas": "R290", "price": 3100},
     {"brand": "Climer", "model": "EcoFlex 300", "type": "Aria/Acqua", "kw": 3.0, "gas": "R290", "price": 3500},
@@ -78,11 +78,11 @@ HP_DATABASE = [
     {"brand": "Climer", "model": "EcoFlex EF02", "type": "Aria/Acqua", "kw": 2.2, "gas": "R134a/R513A", "price": 2600},
     {"brand": "Climer", "model": "EcoFlex EF04", "type": "Aria/Acqua", "kw": 3.8, "gas": "R134a/R513A", "price": 3100},
 
-    # --- ALTRE PICCOLE TAGLIE (< 4 kW) ---
+    # --- SMALL ---
     {"brand": "Panasonic", "model": "Aquarea (J Gen)", "type": "Aria/Acqua", "kw": 3.2, "gas": "R32", "price": 3900},
     {"brand": "Climer", "model": "EcoHeat", "type": "Aria/Acqua", "kw": 3.5, "gas": "R290", "price": 3500},
     
-    # --- RESIDENZIALE STANDARD (4 - 16 kW) ---
+    # --- STANDARD ---
     {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 8.0, "gas": "R290", "price": 5200},
     {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290", "price": 6800},
     {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 4.0, "gas": "R32", "price": 4200},
@@ -99,7 +99,7 @@ HP_DATABASE = [
     {"brand": "LG", "model": "Therma V Split", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32", "price": 6500},
     {"brand": "Stiebel Eltron", "model": "WPL 25", "type": "Aria/Acqua", "kw": 14.0, "gas": "R410A", "price": 9500},
 
-    # --- COMMERCIALE / INDUSTRIALE LEGGERO (16 - 80 kW) ---
+    # --- COMMERCIAL ---
     {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 18.0, "gas": "R410A", "price": 9500},
     {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 13000},
     {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32", "price": 11000},
@@ -113,7 +113,7 @@ HP_DATABASE = [
     {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32", "price": 25000},
     {"brand": "Rhoss", "model": "WinPACK", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 12000},
     
-    # --- INDUSTRIALE (80 - 200 kW) ---
+    # --- INDUSTRIAL ---
     {"brand": "Climer", "model": "H Series", "type": "Aria/Acqua", "kw": 90.0, "gas": "R410A", "price": 28000},
     {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 85.0, "gas": "R32", "price": 29000},
     {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 110.0, "gas": "R32", "price": 36000},
@@ -127,11 +127,11 @@ HP_DATABASE = [
     {"brand": "Aermec", "model": "NRB", "type": "Aria/Acqua", "kw": 100.0, "gas": "R410A", "price": 31000},
     {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 47000},
     {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 59000},
-    {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 110.0, "gas": "R454B"},
-    {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 160.0, "gas": "R454B"},
-    {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 210.0, "gas": "R454B"},
+    {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 110.0, "gas": "R454B"},
+    {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 160.0, "gas": "R454B"},
+    {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 210.0, "gas": "R454B"},
 
-    # --- GEOTERMICHE / ACQUA-ACQUA ---
+    # --- WATER ---
     {"brand": "Daikin", "model": "Altherma 3 GEO", "type": "Acqua/Acqua", "kw": 10.0, "gas": "R32", "price": 9500},
     {"brand": "Nibe", "model": "S1155", "type": "Acqua/Acqua", "kw": 12.0, "gas": "R407C", "price": 11000},
     {"brand": "Viessmann", "model": "Vitocal 300-G", "type": "Acqua/Acqua", "kw": 17.0, "gas": "R410A", "price": 13000},
@@ -224,6 +224,16 @@ def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
     hourly_flow_lmin = [val / 60.0 for val in hourly_flow]
     return list(range(24)), hourly_flow_lmin, total_daily_vol
 
+def get_solar_window(zone):
+    # Definizione semplificata delle ore di picco in base alla zona climatica
+    # A/B (Sud): più ore. E/F (Nord): meno ore.
+    windows = {
+        "A": (9, 17), "B": (9, 17),
+        "C": (10, 16), "D": (10, 16),
+        "E": (11, 15), "F": (11, 15)
+    }
+    return windows.get(zone, (10, 16))
+
 # --- SIDEBAR ---
 st.sidebar.header("Parametri Progetto")
 t_in = st.sidebar.number_input("Temp. Acqua Rete (°C)", value=12.5, step=0.5, format="%.1f")
@@ -288,9 +298,23 @@ with st.sidebar.expander("🔋 3. Batterie", expanded=True):
         else:
             st.error("Nessuna combinazione trovata.")
 
-with st.sidebar.expander("📈 Simulazione 24h", expanded=False):
+# --- SIMULAZIONE 24H INPUTS ---
+with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
     sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
     sim_type = st.selectbox("Tipo Edificio", ["Residenziale", "Ufficio", "Hotel"])
+    
+    st.markdown("---")
+    st.markdown("**Strategia di Reintegro**")
+    recharge_strategy = st.selectbox("Modalità", ["Smart Hysteresis (Standard)", "Autoconsumo Fotovoltaico"])
+    
+    solar_zone = "C"
+    pv_coverage = 0
+    if recharge_strategy == "Autoconsumo Fotovoltaico":
+        col_pv1, col_pv2 = st.columns(2)
+        with col_pv1:
+            solar_zone = st.selectbox("Fascia Climatica", ["A", "B", "C", "D", "E", "F"], index=2)
+        with col_pv2:
+            pv_coverage = st.number_input("Copertura PV (%)", 0, 100, 50, step=10)
 
 # --- CALCOLI PRINCIPALI ---
 config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
@@ -345,6 +369,7 @@ c1.metric("Portata Target", f"{qp_lmin_target:.1f} L/min")
 c2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota coperta dalla batteria")
 c3.metric("Autonomia", autonomy_str, help="Durata alla portata di picco")
 c4.metric("Costo Batterie", f"€ {total_cost:,.0f}", help=cost_tooltip)
+c4.caption("⚠️ Contattare fornitore per conferma")
 
 c1b, c2b, c3b, c4b = st.columns(4)
 c1b.metric(f"Salto Termico", f"{dt_target:.1f} °C")
@@ -352,6 +377,7 @@ c2b.metric("Potenza PdC Calc.", f"{p_hp_tot_input:.1f} kW", help=f"Necessaria pe
 val_v40_disp = f"{total_v40_liters:.0f} L" if total_v40_liters < 99999 else "∞"
 c3b.metric("Volume V40 Totale", val_v40_disp)
 c4b.metric("Costo PdC (Min)", hp_cost_disp, help=hp_tooltip)
+c4b.caption("⚠️ Contattare fornitore per conferma")
 
 if p_hp_tot_input > 0 or p_hp_tot_input == 0: 
     st.markdown("### 🔍 Suggerimento Pompe di Calore (Multi-Brand)")
@@ -411,42 +437,63 @@ else:
 
 st.divider()
 
-# --- GRAFICO SIMULAZIONE 24H (CON SOC E SMART REINTEGRO) ---
-with st.expander("📈 Simulazione Profilo Giornaliero & Smart Reintegro", expanded=True):
+# --- GRAFICO SIMULAZIONE 24H (CON SOC E SMART REINTEGRO PV) ---
+with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", expanded=True):
     hours_day, hourly_flow_lmin, total_daily_L = get_daily_profile_curve(sim_people, sim_type)
     
-    # 1. Setup Simulazione Minuto per Minuto
-    sim_minutes = 1440 # 24h * 60min
-    x_time = np.arange(sim_minutes) # 0..1439
+    # 1. Setup Simulazione
+    sim_minutes = 1440 
+    x_time = np.arange(sim_minutes)
     
-    # Interpolazione del consumo orario (L/min) su base minuti
-    x_hours = np.linspace(0, 1440, 25) # 0, 60, 120... 1440
-    # hourly_flow_lmin ha 24 valori. Aggiungiamo il primo alla fine per chiudere il cerchio (grafico ciclico)
+    # Interpolazione del consumo
+    x_hours = np.linspace(0, 1440, 25) 
     y_flow = hourly_flow_lmin + [hourly_flow_lmin[0]]
     f_interp = interpolate.interp1d(x_hours, y_flow, kind='linear')
-    consumption_curve_min = f_interp(x_time) # L/min istantaneo per ogni minuto
+    consumption_curve_min = f_interp(x_time)
     
-    # 2. Parametri Batteria e PdC
-    tank_capacity_L = total_v40_liters if total_v40_liters < 99999 else 9999 # Limit for plot
-    # Calcolo portata di reintegro PdC (L/min) basata sulla potenza input
-    # p_hp_tot_input (kW) -> Energy (kJ/s) -> L/min @ dt_target
-    # Formula: L/min = (kW * 60) / (4.186 * dt)
+    # 2. Parametri
+    tank_capacity_L = total_v40_liters if total_v40_liters < 99999 else 9999 
     hp_recharge_flow_lmin = (p_hp_tot_input * 60) / (4.186 * dt_target) if dt_target > 0 else 0
     
-    # 3. Loop Simulazione (Logic: Smart Hysteresis)
+    # Logica Solare
+    s_start, s_end = get_solar_window(solar_zone)
+    start_min_solar = s_start * 60
+    end_min_solar = s_end * 60
+    
+    # 3. Loop Simulazione
     current_vol = tank_capacity_L
     soc_history = []
     hp_status_history = []
     
     hp_on = False
-    start_threshold = tank_capacity_L * 0.7 # Accendi se < 70%
-    stop_threshold = tank_capacity_L * 0.98 # Spegni se > 98%
+    
+    # Contatori Energia
+    total_kwh_used = 0
+    solar_kwh_used = 0
+    grid_kwh_used = 0
+    
+    # Power per minuto (kW * 1min / 60) -> kWh per minuto
+    kwh_per_min = p_hp_tot_input / 60.0
     
     for i in range(sim_minutes):
-        # Consumo
-        cons_L = consumption_curve_min[i] # Litri consumati in questo minuto
+        # Determine Solar Availability
+        is_sunny = start_min_solar <= i <= end_min_solar
         
-        # Logica PdC
+        # Define Thresholds based on Strategy
+        if recharge_strategy == "Autoconsumo Fotovoltaico":
+            # Giorno: Forza accumulo (Start 95%)
+            # Notte: Ritarda accensione (Start 30%)
+            start_threshold = tank_capacity_L * 0.95 if is_sunny else tank_capacity_L * 0.30
+            stop_threshold = tank_capacity_L * 1.0 # Always fill
+        else:
+            # Standard
+            start_threshold = tank_capacity_L * 0.70
+            stop_threshold = tank_capacity_L * 0.98
+            
+        # Consumo
+        cons_L = consumption_curve_min[i]
+        
+        # Logica ON/OFF (Hysteresis)
         if not hp_on:
             if current_vol < start_threshold:
                 hp_on = True
@@ -454,73 +501,95 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Smart Reintegro", expan
             if current_vol >= stop_threshold:
                 hp_on = False
         
-        # Produzione
-        prod_L = hp_recharge_flow_lmin if hp_on else 0
+        # Produzione & Energia
+        prod_L = 0
+        if hp_on:
+            prod_L = hp_recharge_flow_lmin
+            total_kwh_used += kwh_per_min
+            if is_sunny and recharge_strategy == "Autoconsumo Fotovoltaico":
+                # Calcola quota solare
+                solar_part = kwh_per_min * (pv_coverage / 100.0)
+                grid_part = kwh_per_min - solar_part
+                solar_kwh_used += solar_part
+                grid_kwh_used += grid_part
+            else:
+                grid_kwh_used += kwh_per_min
         
-        # Bilancio
+        # Bilancio idraulico
         current_vol = current_vol - cons_L + prod_L
-        
-        # Limiti Fisici
         if current_vol > tank_capacity_L: current_vol = tank_capacity_L
-        if current_vol < 0: current_vol = 0 # Empty tank alert!
+        if current_vol < 0: current_vol = 0 
         
         soc_history.append(current_vol)
         hp_status_history.append(prod_L)
 
-    # 4. Creazione Grafico Combinato (Plotly Subplots)
+    # 4. Grafico
     fig_smart = make_subplots(specs=[[{"secondary_y": True}]])
     
-    # Area Consumo (Arancione)
+    # Area Solar Window (Solo se attivo PV)
+    if recharge_strategy == "Autoconsumo Fotovoltaico":
+        fig_smart.add_vrect(
+            x0=s_start, x1=s_end,
+            fillcolor="yellow", opacity=0.15,
+            layer="below", line_width=0,
+            annotation_text="Solar Window", annotation_position="top left"
+        )
+    
+    # Consumo
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=consumption_curve_min,
-        mode='lines', fill='tozeroy', name='Prelievo Utenza (L/min)',
-        line=dict(color='#ffaa00', width=1),
-        hovertemplate='Ora: %{x:.1f}h<br>Prelievo: %{y:.1f} L/min'
+        mode='lines', fill='tozeroy', name='Prelievo Utenza',
+        line=dict(color='#ffaa00', width=1)
     ), secondary_y=False)
     
-    # Linea Produzione PdC (Verde - Step)
+    # Produzione PdC
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=hp_status_history,
-        mode='lines', name='Reintegro PdC (L/min)',
+        mode='lines', name='Reintegro PdC',
         line=dict(color='#2a9d8f', width=2),
-        fill='tozeroy', fillcolor='rgba(42, 157, 143, 0.2)',
-        hovertemplate='Attiva: %{y:.1f} L/min'
+        fill='tozeroy', fillcolor='rgba(42, 157, 143, 0.2)'
     ), secondary_y=False)
     
-    # Linea SoC Batteria (Blu - Asse Secondario)
+    # SoC
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=soc_history,
-        mode='lines', name='Carica Batteria (Litri)',
-        line=dict(color='#007acc', width=3),
-        hovertemplate='Volume Disp.: %{y:.0f} L'
+        mode='lines', name='Carica Batteria',
+        line=dict(color='#007acc', width=3)
     ), secondary_y=True)
     
-    # Marker Start Reintegro
-    starts = [i/60 for i in range(1, sim_minutes) if hp_status_history[i] > 0 and hp_status_history[i-1] == 0]
-    start_y = [0] * len(starts)
-    fig_smart.add_trace(go.Scatter(
-        x=starts, y=start_y,
-        mode='markers', name='Start Reintegro',
-        marker=dict(symbol='triangle-up', size=12, color='green'),
-        hoverinfo='skip'
-    ), secondary_y=False)
+    # Reference Lines
+    max_sys_flow = 0
+    nom_sys_flow = 0
+    for qty, size in config:
+        if qty > 0:
+            last_pt = CURVES_DB[size][t_pcm][-1] 
+            max_sys_flow += (last_pt[0] * qty)
+            nom_sys_flow += (NOMINAL_FLOWS[size] * qty)
+            
+    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[max_sys_flow, max_sys_flow], mode='lines', name='Capacità Max', line=dict(color='#2a9d8f', width=2, dash='dash')), secondary_y=False)
+    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[nom_sys_flow, nom_sys_flow], mode='lines', name='Portata Nominale', line=dict(color='#00CC96', width=2, dash='dot')), secondary_y=False)
+    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[nom_sys_flow*0.8, nom_sys_flow*0.8], mode='lines', name='80% Nominale', line=dict(color='#AB63FA', width=2, dash='dot')), secondary_y=False)
 
-    # Layout
     fig_smart.update_layout(
-        title=f"Strategia Smart Reintegro (Vol. Tot: {tank_capacity_L:.0f} L)",
+        title=f"Strategia: {recharge_strategy}",
         xaxis_title="Ora del Giorno (0-24h)",
         height=450,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     fig_smart.update_yaxes(title_text="Portata (L/min)", secondary_y=False)
-    fig_smart.update_yaxes(title_text="Volume Accumulato (L)", secondary_y=True, range=[0, tank_capacity_L*1.1])
+    fig_smart.update_yaxes(title_text="Volume (L)", secondary_y=True, range=[0, tank_capacity_L*1.1])
     
     st.plotly_chart(fig_smart, use_container_width=True)
+    st.caption("Nota: I profili orari sono **stime statistiche derivate da standard ASHRAE e UNI 9182**. La norma EN 806-3 calcola il picco istantaneo.")
     
-    st.info(f"""
-    **Strategia Suggerita:** Il sistema attiva la PdC da **{p_hp_tot_input:.1f} kW** quando l'accumulo scende sotto il **70%** ({start_threshold:.0f} L) 
-    e la spegne al **98%**. Questo garantisce acqua calda sempre disponibile minimizzando i cicli di accensione (visibili come aree verdi).
-    """)
+    # KPI Energetici
+    kpi1, kpi2, kpi3 = st.columns(3)
+    kpi1.metric("Energia Totale PdC", f"{total_kwh_used:.1f} kWh/giorno")
+    if recharge_strategy == "Autoconsumo Fotovoltaico":
+        kpi2.metric("Da Fotovoltaico", f"{solar_kwh_used:.1f} kWh", delta=f"{(solar_kwh_used/total_kwh_used)*100:.0f}%")
+        kpi3.metric("Da Rete", f"{grid_kwh_used:.1f} kWh", delta=f"-{(grid_kwh_used/total_kwh_used)*100:.0f}%", delta_color="inverse")
+    else:
+        kpi2.metric("Da Rete", f"{total_kwh_used:.1f} kWh")
 
 # --- TABELLA MIX BATTERIE ---
 table_rows = ""
