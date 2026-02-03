@@ -7,16 +7,30 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import itertools
 from scipy import interpolate
+import requests
+from datetime import datetime
 
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Simulatore i-TES Pro", layout="wide")
-st.title("🚰 Simulatore i-TES: Curve Reali & Ottimizzazione")
+st.title("🚰 Simulatore i-TES: Site-Specific & PVGIS")
 
 # --- GESTIONE STATO ---
 if 'qty_6' not in st.session_state: st.session_state.qty_6 = 0
 if 'qty_12' not in st.session_state: st.session_state.qty_12 = 0
 if 'qty_20' not in st.session_state: st.session_state.qty_20 = 1
 if 'qty_40' not in st.session_state: st.session_state.qty_40 = 0
+if 'lat' not in st.session_state: st.session_state.lat = 41.9028 # Default Roma
+if 'lon' not in st.session_state: st.session_state.lon = 12.4964
+if 'address_found' not in st.session_state: st.session_state.address_found = "Roma, Italia (Default)"
+
+# Inizializzazione Slider Strategia PV
+if 'pv_start_sun' not in st.session_state: st.session_state.pv_start_sun = 95
+if 'pv_start_night' not in st.session_state: st.session_state.pv_start_night = 30
+if 'pv_stop' not in st.session_state: st.session_state.pv_stop = 98
+
+# ==========================================
+#  SEZIONE FUNZIONI (DEFINITE PRIMA DELL'USO)
+# ==========================================
 
 def manage_qty(key_name, label):
     col_minus, col_val, col_plus = st.columns([1, 2, 1])
@@ -32,13 +46,122 @@ def manage_qty(key_name, label):
             st.session_state[key_name] += 1
             st.rerun()
 
+def get_solar_window(zone):
+    windows = {
+        "A": (9, 17), "B": (9, 17),
+        "C": (10, 16), "D": (10, 16),
+        "E": (11, 15), "F": (11, 15)
+    }
+    return windows.get(zone, (10, 16))
+
+def get_coordinates(address):
+    url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json&limit=1"
+    headers = {'User-Agent': 'iTES_Simulator/1.0'}
+    try:
+        r = requests.get(url, headers=headers)
+        if r.status_code == 200 and r.json():
+            data = r.json()[0]
+            return float(data['lat']), float(data['lon']), data['display_name']
+    except:
+        return None, None, None
+    return None, None, None
+
+def get_pvgis_data(lat, lon, month_idx=0):
+    url = "https://re.jrc.ec.europa.eu/api/v5_2/PVcalc"
+    params = {
+        'lat': lat, 'lon': lon, 'peakpower': 1, 'loss': 14,
+        'outputformat': 'json', 'angle': 35, 'aspect': 0 
+    }
+    try:
+        r = requests.get(url, params=params)
+        if r.status_code == 200:
+            data = r.json()
+            monthly_data = data['outputs']['monthly']['fixed']
+            ed_kwh = monthly_data[month_idx]['E_d']
+            return ed_kwh
+    except:
+        pass
+    return 3.5 
+
+def create_solar_curve_site_specific(lat, lon, total_daily_kwh_per_kwp):
+    day_length = 12
+    minutes = np.arange(1440)
+    center_min = 12 * 60
+    sigma = (day_length * 60) / 6 
+    curve = np.exp(-((minutes - center_min)**2) / (2 * sigma**2))
+    curve[curve < 0.01] = 0
+    return curve
+
+def calcola_qd_en806(total_lu, max_single_lu):
+    max_single_qa = max_single_lu * 0.1 
+    conv_lu = 300.0; conv_qd = 1.7
+    if total_lu <= 0: return 0.0
+    if total_lu >= conv_lu: return 0.1 * math.sqrt(total_lu)
+    else:
+        if total_lu < max_single_lu: total_lu = max_single_lu
+        x1, y1 = math.log(max_single_lu), math.log(max_single_qa)
+        x2, y2 = math.log(conv_lu), math.log(conv_qd)
+        m = 0 if x2 == x1 else (y2 - y1) / (x2 - x1)
+        return math.exp(y1 + m * (math.log(total_lu) - x1))
+
+def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
+    interpolators_p = {}
+    interpolators_t = {}
+    limits = {}
+    for qty, size in config:
+        if qty > 0:
+            raw = CURVES_DB[size][t_pcm]
+            flows = [r[0] for r in raw]
+            powers = [r[1] for r in raw]
+            temps = [r[2] for r in raw]
+            limits[size] = max(flows)
+            interpolators_p[size] = interpolate.interp1d(flows, powers, kind='linear', fill_value="extrapolate")
+            interpolators_t[size] = interpolate.interp1d(flows, temps, kind='linear', fill_value="extrapolate")
+    if not interpolators_p: return [], [], [], []
+    alpha_values = np.linspace(0.01, 1.1, 50) 
+    sys_flows, sys_powers, sys_temps, sys_v40_volumes = [], [], [], []
+    for alpha in alpha_values:
+        f_tot, p_tot_batt, weighted_temp_sum = 0, 0, 0
+        for qty, size in config:
+            if qty > 0:
+                f_single = limits[size] * alpha
+                p_single = float(interpolators_p[size](f_single))
+                t_single = float(interpolators_t[size](f_single))
+                f_block = f_single * qty
+                f_tot += f_block
+                p_tot_batt += (p_single * qty)
+                weighted_temp_sum += (t_single * f_block)
+        sys_flows.append(f_tot)
+        sys_powers.append(p_tot_batt)
+        t_mix = weighted_temp_sum / f_tot if f_tot > 0 else 0
+        sys_temps.append(t_mix)
+        p_req_at_flow = f_tot * dt_calc * 0.0697
+        p_deficit = p_req_at_flow - p_hp_tot
+        v40_vol = (e_tot_e0 / p_deficit) * 60 * f_tot if p_deficit > 0 else 99999 
+        sys_v40_volumes.append(v40_vol)
+    return sys_flows, sys_powers, sys_temps, sys_v40_volumes
+
+def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
+    liters_per_person = 50 
+    if building_type == "Ufficio": liters_per_person = 15
+    elif building_type == "Hotel": liters_per_person = 80
+    total_daily_vol = n_people * liters_per_person
+    profiles = {
+        "Residenziale": [0.5, 0.2, 0.1, 0.1, 0.5, 2.0, 8.0, 12.0, 9.0, 6.0, 5.0, 4.0, 5.0, 4.0, 3.0, 3.0, 4.0, 6.0, 10.0, 11.0, 5.0, 2.0, 1.0, 0.6],
+        "Ufficio":      [0, 0, 0, 0, 0, 0, 2, 8, 15, 12, 10, 15, 12, 10, 8, 5, 3, 0, 0, 0, 0, 0, 0, 0],
+        "Hotel":        [1, 0.5, 0.5, 0.5, 1, 3, 10, 15, 12, 8, 5, 4, 3, 3, 3, 4, 6, 8, 12, 8, 5, 3, 2, 1]
+    }
+    selected_profile = profiles.get(building_type, profiles["Residenziale"])
+    factor = 100.0 / sum(selected_profile)
+    hourly_flow = [(p * factor / 100.0) * total_daily_vol for p in selected_profile]
+    hourly_flow_lmin = [val / 60.0 for val in hourly_flow]
+    return list(range(24)), hourly_flow_lmin, total_daily_vol
+
 # ==========================================
-#  DATABASE PARAMETRI
+#  DATABASE PARAMETRI E HP
 # ==========================================
 prices = { 6: 3300.0, 12: 5100.0, 20: 7400.0, 40: 13200.0 }
-
 NOMINAL_FLOWS = { 6: 10.0, 12: 20.0, 20: 25.0, 40: 50.0 }
-
 params_v40 = {
     6:  {'V0': 130.0,  'max_lmin': 24.0}, 
     12: {'V0': 260.0,  'max_lmin': 32.0},
@@ -138,95 +261,29 @@ HP_DATABASE = [
     {"brand": "Clivet", "model": "WSH-XEE", "type": "Acqua/Acqua", "kw": 100.0, "gas": "R410A", "price": 35000},
 ]
 
+# ==========================================
+#  DEFINIZIONE FUNZIONE DI RICERCA (ORA CHE IL DB ESISTE)
+# ==========================================
 def get_suggested_hp(target_kw):
     if target_kw <= 0: return [], []
     air_water = []
     water_water = []
+    # Logica di ricerca flessibile
     search_min = target_kw if target_kw > 3.0 else 0.0
     limit_upper = max(target_kw + 10.0, 8.0)
+    
     for hp in HP_DATABASE:
         if search_min <= hp['kw'] < limit_upper:
-             if hp['type'] == "Aria/Acqua": air_water.append(hp)
-             else: water_water.append(hp)
+             if hp['type'] == "Aria/Acqua":
+                 air_water.append(hp)
+             else:
+                 water_water.append(hp)
+    
     air_water.sort(key=lambda x: x['kw'])
     water_water.sort(key=lambda x: x['kw'])
     return air_water, water_water
 
-# --- FUNZIONI DI CALCOLO ---
-def calcola_qd_en806(total_lu, max_single_lu):
-    max_single_qa = max_single_lu * 0.1 
-    conv_lu = 300.0; conv_qd = 1.7
-    if total_lu <= 0: return 0.0
-    if total_lu >= conv_lu: return 0.1 * math.sqrt(total_lu)
-    else:
-        if total_lu < max_single_lu: total_lu = max_single_lu
-        x1, y1 = math.log(max_single_lu), math.log(max_single_qa)
-        x2, y2 = math.log(conv_lu), math.log(conv_qd)
-        m = 0 if x2 == x1 else (y2 - y1) / (x2 - x1)
-        return math.exp(y1 + m * (math.log(total_lu) - x1))
-
-def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
-    interpolators_p = {}
-    interpolators_t = {}
-    limits = {}
-    for qty, size in config:
-        if qty > 0:
-            raw = CURVES_DB[size][t_pcm]
-            flows = [r[0] for r in raw]
-            powers = [r[1] for r in raw]
-            temps = [r[2] for r in raw]
-            limits[size] = max(flows)
-            interpolators_p[size] = interpolate.interp1d(flows, powers, kind='linear', fill_value="extrapolate")
-            interpolators_t[size] = interpolate.interp1d(flows, temps, kind='linear', fill_value="extrapolate")
-    if not interpolators_p: return [], [], [], []
-    alpha_values = np.linspace(0.01, 1.1, 50) 
-    sys_flows, sys_powers, sys_temps, sys_v40_volumes = [], [], [], []
-    for alpha in alpha_values:
-        f_tot, p_tot_batt, weighted_temp_sum = 0, 0, 0
-        for qty, size in config:
-            if qty > 0:
-                f_single = limits[size] * alpha
-                p_single = float(interpolators_p[size](f_single))
-                t_single = float(interpolators_t[size](f_single))
-                f_block = f_single * qty
-                f_tot += f_block
-                p_tot_batt += (p_single * qty)
-                weighted_temp_sum += (t_single * f_block)
-        sys_flows.append(f_tot)
-        sys_powers.append(p_tot_batt)
-        t_mix = weighted_temp_sum / f_tot if f_tot > 0 else 0
-        sys_temps.append(t_mix)
-        p_req_at_flow = f_tot * dt_calc * 0.0697
-        p_deficit = p_req_at_flow - p_hp_tot
-        v40_vol = (e_tot_e0 / p_deficit) * 60 * f_tot if p_deficit > 0 else 99999 
-        sys_v40_volumes.append(v40_vol)
-    return sys_flows, sys_powers, sys_temps, sys_v40_volumes
-
-def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
-    liters_per_person = 50 
-    if building_type == "Ufficio": liters_per_person = 15
-    elif building_type == "Hotel": liters_per_person = 80
-    total_daily_vol = n_people * liters_per_person
-    profiles = {
-        "Residenziale": [0.5, 0.2, 0.1, 0.1, 0.5, 2.0, 8.0, 12.0, 9.0, 6.0, 5.0, 4.0, 5.0, 4.0, 3.0, 3.0, 4.0, 6.0, 10.0, 11.0, 5.0, 2.0, 1.0, 0.6],
-        "Ufficio":      [0, 0, 0, 0, 0, 0, 2, 8, 15, 12, 10, 15, 12, 10, 8, 5, 3, 0, 0, 0, 0, 0, 0, 0],
-        "Hotel":        [1, 0.5, 0.5, 0.5, 1, 3, 10, 15, 12, 8, 5, 4, 3, 3, 3, 4, 6, 8, 12, 8, 5, 3, 2, 1]
-    }
-    selected_profile = profiles.get(building_type, profiles["Residenziale"])
-    factor = 100.0 / sum(selected_profile)
-    hourly_flow = [(p * factor / 100.0) * total_daily_vol for p in selected_profile]
-    hourly_flow_lmin = [val / 60.0 for val in hourly_flow]
-    return list(range(24)), hourly_flow_lmin, total_daily_vol
-
-def get_solar_window(zone):
-    windows = {
-        "A": (9, 17), "B": (9, 17),
-        "C": (10, 16), "D": (10, 16),
-        "E": (11, 15), "F": (11, 15)
-    }
-    return windows.get(zone, (10, 16))
-
-# --- SIDEBAR ---
+# --- SIDEBAR UI ---
 st.sidebar.header("Parametri Progetto")
 t_in = st.sidebar.number_input("Temp. Acqua Rete (°C)", value=12.5, step=0.5, format="%.1f")
 dt_target = 40.0 - t_in
@@ -244,6 +301,7 @@ with st.sidebar.expander("🏗️ 1. Utenze (LU)", expanded=False):
     
     lu_totali = sum(i['qty']*i['val'] for i in inputs.values()) or 1
     max_lu_unit = max([i['val'] for i in inputs.values() if i['qty']>0] or [1])
+    
     qd_ls_target = calcola_qd_en806(lu_totali, max_lu_unit)
     qp_lmin_target = qd_ls_target * 60 
     st.info(f"Target (EN 806): **{qp_lmin_target:.1f} L/min**")
@@ -299,29 +357,52 @@ with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
     st.markdown("**Strategia di Reintegro**")
     recharge_strategy = st.selectbox("Modalità", ["Smart Hysteresis (Standard)", "Autoconsumo Fotovoltaico"])
     
-    solar_zone = "C"
-    pv_coverage = 0
+    st.markdown("📍 **Localizzazione Impianto**")
+    address_input = st.text_input("Indirizzo (es. Via Roma 1, Milano)", value="")
+    if st.button("Cerca Indirizzo"):
+        if address_input:
+            lat, lon, disp_name = get_coordinates(address_input)
+            if lat:
+                st.session_state.lat = lat
+                st.session_state.lon = lon
+                st.session_state.address_found = disp_name
+                st.success("Indirizzo trovato!")
+            else:
+                st.error("Indirizzo non trovato.")
     
+    st.caption(f"Posizione: {st.session_state.address_found}")
+    df_map = pd.DataFrame({'lat': [st.session_state.lat], 'lon': [st.session_state.lon]})
+    st.map(df_map, zoom=10, use_container_width=True)
+    
+    pv_coverage = 0
     val_start_std = 70
-    val_stop = 98
-    val_start_sun = 95
-    val_start_night = 30
     
     if recharge_strategy == "Autoconsumo Fotovoltaico":
-        col_pv1, col_pv2 = st.columns(2)
-        with col_pv1:
-            solar_zone = st.selectbox("Fascia Climatica", ["A", "B", "C", "D", "E", "F"], index=2)
-        with col_pv2:
-            pv_coverage = st.number_input("Copertura PV (%)", 0, 100, 50, step=10)
+        pv_coverage = st.number_input("Copertura PV della PdC (%)", 0, 100, 50, step=10)
         
+        # NUOVO SELETTORE PRIORITA'
+        pv_priority = st.radio("Priorità Strategia PV", ["🛡️ Massimo Comfort (Batteria sempre carica)", "⚙️ Salvaguardia PdC (Minimizza ON/OFF)"])
+        
+        if st.button("✨ Ottimizza Strategia"):
+            if pv_priority == "🛡️ Massimo Comfort (Batteria sempre carica)":
+                st.session_state.pv_start_sun = 98
+                st.session_state.pv_start_night = 30
+                st.session_state.pv_stop = 100
+            else:
+                # Strategia Long Cycle: Scarica profonda prima di partire
+                st.session_state.pv_start_sun = 50 
+                st.session_state.pv_start_night = 15
+                st.session_state.pv_stop = 100
+            st.rerun()
+            
         st.markdown("**Soglie Intervento (%)**")
-        start_soc_sun = st.slider("Avvio con Sole se carica < (%)", 0, 100, val_start_sun)
-        start_soc_night = st.slider("Avvio Notturno se carica < (%)", 0, 100, val_start_night)
-        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, val_stop)
+        start_soc_sun = st.slider("Avvio con Sole se carica < (%)", 0, 100, key='pv_start_sun')
+        start_soc_night = st.slider("Avvio Notturno se carica < (%)", 0, 100, key='pv_start_night')
+        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, key='pv_stop')
     else:
         st.markdown("**Soglie Intervento (%)**")
         start_soc_std = st.slider("Avvio Reintegro se carica < (%)", 0, 100, val_start_std)
-        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, val_stop)
+        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, 98)
 
 # --- CALCOLI PRINCIPALI ---
 config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
@@ -448,6 +529,11 @@ st.divider()
 with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", expanded=True):
     hours_day, hourly_flow_lmin, total_daily_L = get_daily_profile_curve(sim_people, sim_type)
     
+    # PVGIS Data Retrieval (per scalare la curva)
+    # Prendiamo il mese corrente (1-12 -> 0-11 index)
+    curr_month_idx = datetime.now().month - 1
+    daily_kwh_kwp = get_pvgis_data(st.session_state.lat, st.session_state.lon, curr_month_idx)
+    
     # 1. Setup Simulazione
     sim_minutes = 1440 
     x_time = np.arange(sim_minutes)
@@ -462,8 +548,9 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
     tank_capacity_L = total_v40_liters if total_v40_liters < 99999 else 9999 
     hp_recharge_flow_lmin = (p_hp_tot_input * 60) / (4.186 * dt_target) if dt_target > 0 else 0
     
-    # Logica Solare
-    s_start, s_end = get_solar_window(solar_zone)
+    # Curva Solare (Site Specific)
+    solar_profile_norm = create_solar_curve_site_specific(st.session_state.lat, st.session_state.lon, daily_kwh_kwp)
+    s_start, s_end = get_solar_window(st.session_state.get('solar_zone', 'C')) # Default C if not set
     start_min_solar = s_start * 60
     end_min_solar = s_end * 60
     
@@ -476,10 +563,12 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         tot_kwh = 0
         sol_kwh = 0
         grd_kwh = 0
+        cycle_count = 0
         kwh_per_m = p_hp_tot_input / 60.0
         
         for i in range(sim_minutes):
-            is_sunny = start_min_solar <= i <= end_min_solar
+            solar_intensity = solar_profile_norm[i]
+            is_sunny = solar_intensity > 0.05 # Threshold di "Sole"
             
             if recharge_strategy == "Autoconsumo Fotovoltaico":
                 st_thr = tank_capacity_L * (start_soc_sun/100.0) if is_sunny else tank_capacity_L * (start_soc_night/100.0)
@@ -491,7 +580,9 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
             cons_L = consumption_curve_min[i]
             
             if not is_hp_on:
-                if curr_v < st_thr: is_hp_on = True
+                if curr_v < st_thr: 
+                    is_hp_on = True
+                    cycle_count += 1
             else:
                 if curr_v >= sp_thr: is_hp_on = False
             
@@ -500,7 +591,9 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
                 prod_L = hp_recharge_flow_lmin
                 tot_kwh += kwh_per_m
                 if is_sunny and recharge_strategy == "Autoconsumo Fotovoltaico":
-                    s_part = kwh_per_m * (pv_coverage / 100.0)
+                    # Calcola quota solare istantanea
+                    s_part = kwh_per_m * (pv_coverage / 100.0) * solar_intensity 
+                    if s_part > kwh_per_m: s_part = kwh_per_m
                     sol_kwh += s_part
                     grd_kwh += (kwh_per_m - s_part)
                 else:
@@ -513,25 +606,43 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
             soc_hist.append(curr_v)
             hp_status_hist.append(prod_L)
             
-        return soc_hist, hp_status_hist, curr_v, is_hp_on, tot_kwh, sol_kwh, grd_kwh
+        return soc_hist, hp_status_hist, curr_v, is_hp_on, tot_kwh, sol_kwh, grd_kwh, cycle_count
 
-    # Warm-up Day (per trovare lo stato iniziale corretto)
-    _, _, end_vol_0, end_state_0, _, _, _ = run_simulation_step(tank_capacity_L * 0.5, False)
+    # Warm-up Day
+    _, _, end_vol_0, end_state_0, _, _, _, _ = run_simulation_step(tank_capacity_L * 0.5, False)
     
     # Run Ufficiale
-    soc_history, hp_status_history, _, _, total_kwh_used, solar_kwh_used, grid_kwh_used = run_simulation_step(end_vol_0, end_state_0)
+    soc_history, hp_status_history, _, _, total_kwh_used, solar_kwh_used, grid_kwh_used, cycle_total = run_simulation_step(end_vol_0, end_state_0)
+    
+    # Cumulative Consumption & Production (NEW LOGIC)
+    cumulative_consumption = np.cumsum(consumption_curve_min)
+    cumulative_production = np.cumsum(hp_status_history)
+    
+    # Difference (Net Contribution)
+    # Positive = Battery Filling (Surplus), Negative = Battery Emptying (Deficit)
+    # Offset by initial state to make it relative to 0 start for clarity?
+    # Or simple subtraction: CumulProd - CumulCons.
+    cumulative_diff = cumulative_production - cumulative_consumption
 
     # 4. Grafico
-    fig_smart = make_subplots(specs=[[{"secondary_y": True}]])
+    fig_smart = make_subplots(
+        rows=2, cols=1, 
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        row_heights=[0.7, 0.3],
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
+    )
     
-    # Area Solar Window
+    # --- ROW 1: MAIN SIMULATION ---
+    # Area Solar Curve (Background Giallo Sfumato)
     if recharge_strategy == "Autoconsumo Fotovoltaico":
-        fig_smart.add_vrect(
-            x0=s_start, x1=s_end,
-            fillcolor="yellow", opacity=0.4,
-            layer="below", line_width=0,
-            annotation_text="Solar Window", annotation_position="top left"
-        )
+        fig_smart.add_trace(go.Scatter(
+            x=x_time/60, y=solar_profile_norm * tank_capacity_L, # Scalato visivamente
+            mode='lines', fill='tozeroy', name='Produzione PV (Profilo)',
+            line=dict(color='yellow', width=0),
+            fillcolor='rgba(255, 215, 0, 0.4)', # Gold con opacità maggiore
+            hoverinfo='skip'
+        ), row=1, col=1, secondary_y=True)
     
     # Consumo (Rosso)
     fig_smart.add_trace(go.Scatter(
@@ -539,7 +650,7 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         mode='lines', fill='tozeroy', name='Prelievo Utenza',
         line=dict(color='#ff0000', width=1),
         fillcolor='rgba(255, 0, 0, 0.2)'
-    ), secondary_y=False)
+    ), row=1, col=1, secondary_y=False)
     
     # Produzione PdC
     fig_smart.add_trace(go.Scatter(
@@ -547,14 +658,18 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         mode='lines', name='Reintegro PdC',
         line=dict(color='#2a9d8f', width=2),
         fill='tozeroy', fillcolor='rgba(42, 157, 143, 0.2)'
-    ), secondary_y=False)
+    ), row=1, col=1, secondary_y=False)
     
     # SoC
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=soc_history,
         mode='lines', name='Carica Batteria',
         line=dict(color='#007acc', width=3)
-    ), secondary_y=True)
+    ), row=1, col=1, secondary_y=True)
+    
+    # Cumulative Consumption (Dotted Red) - Optional on Top, maybe redundant with bottom graph
+    # Keeping it here as requested previously or moving to bottom? 
+    # Let's keep specific curves on top.
     
     # Reference Lines
     max_sys_flow = 0
@@ -565,30 +680,49 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
             max_sys_flow += (last_pt[0] * qty)
             nom_sys_flow += (NOMINAL_FLOWS[size] * qty)
             
-    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[max_sys_flow, max_sys_flow], mode='lines', name='Capacità Max', line=dict(color='#2a9d8f', width=2, dash='dash')), secondary_y=False)
-    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[nom_sys_flow, nom_sys_flow], mode='lines', name='Portata Nominale', line=dict(color='#00CC96', width=2, dash='dot')), secondary_y=False)
-    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[nom_sys_flow*0.8, nom_sys_flow*0.8], mode='lines', name='80% Nominale', line=dict(color='#AB63FA', width=2, dash='dot')), secondary_y=False)
+    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[max_sys_flow, max_sys_flow], mode='lines', name='Capacità Max', line=dict(color='#2a9d8f', width=2, dash='dash')), row=1, col=1, secondary_y=False)
+    
+    # --- ROW 2: DIFFERENCE / NET BALANCE ---
+    
+    # Net Balance (Prod - Cons)
+    # Fill Green if positive, Red if negative requires 2 traces or split. 
+    # Simple Area for now.
+    fig_smart.add_trace(go.Scatter(
+        x=x_time/60, y=cumulative_diff,
+        mode='lines', name='Bilancio (Prod - Cons)',
+        line=dict(color='#663399', width=2),
+        fill='tozeroy'
+    ), row=2, col=1)
+    
+    # Add Zero Line
+    fig_smart.add_shape(type="line", x0=0, y0=0, x1=24, y1=0, line=dict(color="gray", width=1, dash="dash"), row=2, col=1)
 
+    # Layout
     fig_smart.update_layout(
-        title=f"Strategia: {recharge_strategy}",
-        xaxis_title="Ora del Giorno (0-24h)",
-        height=450,
+        title=f"Strategia: {recharge_strategy} | PVGIS: {daily_kwh_kwp:.1f} kWh/kWp (Media Mensile)",
+        height=600,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-    fig_smart.update_yaxes(title_text="Portata (L/min)", secondary_y=False)
-    fig_smart.update_yaxes(title_text="Volume (L)", secondary_y=True, range=[0, tank_capacity_L*1.1])
+    
+    # Axis Titles
+    fig_smart.update_xaxes(title_text="Ora del Giorno (0-24h)", row=2, col=1)
+    fig_smart.update_yaxes(title_text="Portata (L/min)", row=1, col=1, secondary_y=False)
+    fig_smart.update_yaxes(title_text="Volume (L)", row=1, col=1, secondary_y=True, range=[0, tank_capacity_L*1.1])
+    fig_smart.update_yaxes(title_text="Delta Volume (L)", row=2, col=1)
     
     st.plotly_chart(fig_smart, use_container_width=True)
     st.caption("Nota: I profili orari sono **stime statistiche derivate da standard ASHRAE e UNI 9182**. La norma EN 806-3 calcola il picco istantaneo.")
     
     # KPI Energetici
-    kpi1, kpi2, kpi3 = st.columns(3)
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Energia Totale PdC", f"{total_kwh_used:.1f} kWh/giorno")
     if recharge_strategy == "Autoconsumo Fotovoltaico":
         kpi2.metric("Da Fotovoltaico", f"{solar_kwh_used:.1f} kWh", delta=f"{(solar_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%")
         kpi3.metric("Da Rete", f"{grid_kwh_used:.1f} kWh", delta=f"-{(grid_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%", delta_color="inverse")
     else:
         kpi2.metric("Da Rete", f"{total_kwh_used:.1f} kWh")
+        kpi3.metric("Autoconsumo", "N/A")
+    kpi4.metric("Cicli ON/OFF", f"{cycle_total}", help="Numero di accensioni giornaliere della Pompa di Calore")
 
 # --- TABELLA MIX BATTERIE ---
 table_rows = ""
