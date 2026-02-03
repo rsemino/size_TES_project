@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import itertools
 from scipy import interpolate
 
@@ -68,14 +69,13 @@ CURVES_DB = {
     },
 }
 
-# ==========================================
-#  DATABASE POMPE DI CALORE (200kW + GAS + CLIMER COMPLETA)
-# ==========================================
 HP_DATABASE = [
-    # --- CLIMER ECOFLEX (Serie Split per ACS esistente) ---
-    # EF02 corrisponde tipicamente alla taglia piccola (approx 2-2.5 kW termici medi)
+    # --- CLIMER ECOFLEX (Nuova Famiglia) ---
+    {"brand": "Climer", "model": "EcoFlex 150", "type": "Aria/Acqua", "kw": 1.8, "gas": "R290", "price": 2800},
+    {"brand": "Climer", "model": "EcoFlex 200", "type": "Aria/Acqua", "kw": 2.2, "gas": "R290", "price": 3100},
+    {"brand": "Climer", "model": "EcoFlex 300", "type": "Aria/Acqua", "kw": 3.0, "gas": "R290", "price": 3500},
+    {"brand": "Climer", "model": "EcoFlex Plus", "type": "Aria/Acqua", "kw": 4.5, "gas": "R290", "price": 4200},
     {"brand": "Climer", "model": "EcoFlex EF02", "type": "Aria/Acqua", "kw": 2.2, "gas": "R134a/R513A", "price": 2600},
-    # EF04 corrisponde alla taglia superiore (approx 3.5-4 kW termici medi)
     {"brand": "Climer", "model": "EcoFlex EF04", "type": "Aria/Acqua", "kw": 3.8, "gas": "R134a/R513A", "price": 3100},
 
     # --- ALTRE PICCOLE TAGLIE (< 4 kW) ---
@@ -102,11 +102,11 @@ HP_DATABASE = [
     # --- COMMERCIALE / INDUSTRIALE LEGGERO (16 - 80 kW) ---
     {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 18.0, "gas": "R410A", "price": 9500},
     {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 13000},
-    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32", "price": 11000},
-    {"brand": "Daikin", "model": "EWYT-B (Small Inverter)", "type": "Aria/Acqua", "kw": 50.0, "gas": "R32", "price": 18500},
-    {"brand": "Mitsubishi", "model": "CAHV-R (Modular)", "type": "Aria/Acqua", "kw": 40.0, "gas": "R454B", "price": 16000},
-    {"brand": "Aermec", "model": "NRK (High Temp)", "type": "Aria/Acqua", "kw": 35.0, "gas": "R410A", "price": 14500},
-    {"brand": "Aermec", "model": "NRK (High Temp)", "type": "Aria/Acqua", "kw": 55.0, "gas": "R410A", "price": 21000},
+    {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32", "price": 11000},
+    {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 50.0, "gas": "R32", "price": 18500},
+    {"brand": "Mitsubishi", "model": "CAHV-R", "type": "Aria/Acqua", "kw": 40.0, "gas": "R454B", "price": 16000},
+    {"brand": "Aermec", "model": "NRK", "type": "Aria/Acqua", "kw": 35.0, "gas": "R410A", "price": 14500},
+    {"brand": "Aermec", "model": "NRK", "type": "Aria/Acqua", "kw": 55.0, "gas": "R410A", "price": 21000},
     {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 45.0, "gas": "R32", "price": 17000},
     {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32", "price": 24000},
     {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 40.0, "gas": "R32", "price": 15500},
@@ -119,18 +119,14 @@ HP_DATABASE = [
     {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 110.0, "gas": "R32", "price": 36000},
     {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 45000},
     {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 58000},
-    
     {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 100.0, "gas": "R32", "price": 34000},
     {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 46000},
     {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 59000},
-
     {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 120.0, "gas": "R32", "price": 38000},
     {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 180.0, "gas": "R32", "price": 52000},
-
     {"brand": "Aermec", "model": "NRB", "type": "Aria/Acqua", "kw": 100.0, "gas": "R410A", "price": 31000},
     {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 47000},
     {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 59000},
-    
     {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 110.0, "gas": "R454B"},
     {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 160.0, "gas": "R454B"},
     {"brand": "Mitsubishi (Climaveneta)", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 210.0, "gas": "R454B"},
@@ -149,31 +145,17 @@ HP_DATABASE = [
 ]
 
 def get_suggested_hp(target_kw):
-    """
-    Restituisce le PdC che coprono il target_kw.
-    FILTRO: Mostra solo macchine con potenza >= target E < target + 10kW.
-    SE target_kw < 3.0 kW (molto basso), abbassa il filtro per mostrare le entry-level.
-    """
     if target_kw <= 0: return [], []
-    
     air_water = []
     water_water = []
-    
-    # Se il target è bassissimo (es. 1kW), cerca comunque macchine piccole (fino a 10kW)
     search_min = target_kw if target_kw > 3.0 else 0.0
-    # Limite superiore: target + 10kW, ma se il target è basso, almeno fino a 8kW per trovare qualcosa
     limit_upper = max(target_kw + 10.0, 8.0)
-
     for hp in HP_DATABASE:
         if search_min <= hp['kw'] < limit_upper:
-             if hp['type'] == "Aria/Acqua":
-                 air_water.append(hp)
-             else:
-                 water_water.append(hp)
-    
+             if hp['type'] == "Aria/Acqua": air_water.append(hp)
+             else: water_water.append(hp)
     air_water.sort(key=lambda x: x['kw'])
     water_water.sort(key=lambda x: x['kw'])
-    
     return air_water, water_water
 
 # --- FUNZIONI DI CALCOLO ---
@@ -181,8 +163,7 @@ def calcola_qd_en806(total_lu, max_single_lu):
     max_single_qa = max_single_lu * 0.1 
     conv_lu = 300.0; conv_qd = 1.7
     if total_lu <= 0: return 0.0
-    if total_lu >= conv_lu:
-        return 0.1 * math.sqrt(total_lu)
+    if total_lu >= conv_lu: return 0.1 * math.sqrt(total_lu)
     else:
         if total_lu < max_single_lu: total_lu = max_single_lu
         x1, y1 = math.log(max_single_lu), math.log(max_single_qa)
@@ -194,7 +175,6 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
     interpolators_p = {}
     interpolators_t = {}
     limits = {}
-    
     for qty, size in config:
         if qty > 0:
             raw = CURVES_DB[size][t_pcm]
@@ -204,12 +184,9 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
             limits[size] = max(flows)
             interpolators_p[size] = interpolate.interp1d(flows, powers, kind='linear', fill_value="extrapolate")
             interpolators_t[size] = interpolate.interp1d(flows, temps, kind='linear', fill_value="extrapolate")
-
     if not interpolators_p: return [], [], [], []
-
     alpha_values = np.linspace(0.01, 1.1, 50) 
     sys_flows, sys_powers, sys_temps, sys_v40_volumes = [], [], [], []
-    
     for alpha in alpha_values:
         f_tot, p_tot_batt, weighted_temp_sum = 0, 0, 0
         for qty, size in config:
@@ -221,21 +198,31 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
                 f_tot += f_block
                 p_tot_batt += (p_single * qty)
                 weighted_temp_sum += (t_single * f_block)
-        
         sys_flows.append(f_tot)
         sys_powers.append(p_tot_batt)
         t_mix = weighted_temp_sum / f_tot if f_tot > 0 else 0
         sys_temps.append(t_mix)
-        
         p_req_at_flow = f_tot * dt_calc * 0.0697
         p_deficit = p_req_at_flow - p_hp_tot
-        if p_deficit > 0:
-            v40_vol = (e_tot_e0 / p_deficit) * 60 * f_tot
-        else:
-            v40_vol = 99999 
+        v40_vol = (e_tot_e0 / p_deficit) * 60 * f_tot if p_deficit > 0 else 99999 
         sys_v40_volumes.append(v40_vol)
-        
     return sys_flows, sys_powers, sys_temps, sys_v40_volumes
+
+def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
+    liters_per_person = 50 
+    if building_type == "Ufficio": liters_per_person = 15
+    elif building_type == "Hotel": liters_per_person = 80
+    total_daily_vol = n_people * liters_per_person
+    profiles = {
+        "Residenziale": [0.5, 0.2, 0.1, 0.1, 0.5, 2.0, 8.0, 12.0, 9.0, 6.0, 5.0, 4.0, 5.0, 4.0, 3.0, 3.0, 4.0, 6.0, 10.0, 11.0, 5.0, 2.0, 1.0, 0.6],
+        "Ufficio":      [0, 0, 0, 0, 0, 0, 2, 8, 15, 12, 10, 15, 12, 10, 8, 5, 3, 0, 0, 0, 0, 0, 0, 0],
+        "Hotel":        [1, 0.5, 0.5, 0.5, 1, 3, 10, 15, 12, 8, 5, 4, 3, 3, 3, 4, 6, 8, 12, 8, 5, 3, 2, 1]
+    }
+    selected_profile = profiles.get(building_type, profiles["Residenziale"])
+    factor = 100.0 / sum(selected_profile)
+    hourly_flow = [(p * factor / 100.0) * total_daily_vol for p in selected_profile]
+    hourly_flow_lmin = [val / 60.0 for val in hourly_flow]
+    return list(range(24)), hourly_flow_lmin, total_daily_vol
 
 # --- SIDEBAR ---
 st.sidebar.header("Parametri Progetto")
@@ -255,10 +242,9 @@ with st.sidebar.expander("🏗️ 1. Utenze (LU)", expanded=False):
     
     lu_totali = sum(i['qty']*i['val'] for i in inputs.values()) or 1
     max_lu_unit = max([i['val'] for i in inputs.values() if i['qty']>0] or [1])
-    
     qd_ls_target = calcola_qd_en806(lu_totali, max_lu_unit)
     qp_lmin_target = qd_ls_target * 60 
-    st.info(f"Target: **{qp_lmin_target:.1f} L/min**")
+    st.info(f"Target (EN 806): **{qp_lmin_target:.1f} L/min**")
 
 st.sidebar.subheader("🔥 2. Generazione")
 recharge_min = st.sidebar.number_input("Tempo Reintegro Target (min)", value=60, step=10, min_value=1)
@@ -283,25 +269,17 @@ with st.sidebar.expander("🔋 3. Batterie", expanded=True):
         req_flow = qp_lmin_target
         best_count = float('inf'); best_cost = float('inf'); best_cfg = None
         max_search = 6
-        
         for q40, q20, q12, q6 in itertools.product(range(max_search), range(max_search), range(max_search), range(max_search)):
             if q40==0 and q20==0 and q12==0 and q6==0: continue
-            
             nom_flow_tot = (q6 * NOMINAL_FLOWS[6]) + (q12 * NOMINAL_FLOWS[12]) + (q20 * NOMINAL_FLOWS[20]) + (q40 * NOMINAL_FLOWS[40])
             effective_flow = nom_flow_tot * (1 + flow_correction_pct / 100.0)
-            
             if effective_flow >= req_flow:
                 curr_count = q6 + q12 + q20 + q40
                 curr_cost = (q6*prices[6]) + (q12*prices[12]) + (q20*prices[20]) + (q40*prices[40])
                 if curr_count < best_count:
-                    best_count = curr_count
-                    best_cost = curr_cost
-                    best_cfg = (q6, q12, q20, q40)
+                    best_count = curr_count; best_cost = curr_cost; best_cfg = (q6, q12, q20, q40)
                 elif curr_count == best_count:
-                    if curr_cost < best_cost:
-                        best_cost = curr_cost
-                        best_cfg = (q6, q12, q20, q40)
-        
+                    if curr_cost < best_cost: best_cost = curr_cost; best_cfg = (q6, q12, q20, q40)
         if best_cfg:
             st.session_state.qty_6, st.session_state.qty_12 = best_cfg[0], best_cfg[1]
             st.session_state.qty_20, st.session_state.qty_40 = best_cfg[2], best_cfg[3]
@@ -310,12 +288,15 @@ with st.sidebar.expander("🔋 3. Batterie", expanded=True):
         else:
             st.error("Nessuna combinazione trovata.")
 
+with st.sidebar.expander("📈 Simulazione 24h", expanded=False):
+    sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
+    sim_type = st.selectbox("Tipo Edificio", ["Residenziale", "Ufficio", "Hotel"])
+
 # --- CALCOLI PRINCIPALI ---
 config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
           (st.session_state.qty_20, 20), (st.session_state.qty_40, 40)]
 total_cost = sum(q*prices[s] for q,s in config)
 
-# 1. Energia Totale
 total_energy_e0 = 0
 for qty, size in config:
     v0_nominal = params_v40[size]['V0']
@@ -323,15 +304,12 @@ for qty, size in config:
     e0_single = (v0_nominal * 4.186 * dt_target) / 3600.0
     total_energy_e0 += (e0_single * qty)
 
-# 2. Potenza PdC
 recharge_hours = recharge_min / 60.0
 p_hp_tot_input = total_energy_e0 / recharge_hours if recharge_hours > 0 and total_energy_e0 > 0 else 0.0
 
-# 3. Potenza Carico
 p_load = qp_lmin_target * dt_target * 0.0697
 p_req_batt = max(0, p_load - p_hp_tot_input)
 
-# 4. Volume V40 Totale e Autonomia
 net_power_deficit = p_load - p_hp_tot_input
 if net_power_deficit > 0.1:
     total_v40_liters = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
@@ -341,7 +319,6 @@ else:
     total_v40_liters = 99999
     autonomy_str = "∞ (Illimitata)"
 
-# --- PREPARAZIONE METRICHE COSTI E HP ---
 cost_tooltip = "DETTAGLIO COSTI:\n"
 if total_cost > 0:
     for qty, size in config:
@@ -352,31 +329,23 @@ if total_cost > 0:
 else:
     cost_tooltip = "Nessuna batteria selezionata"
 
-# Calcolo Costo Migliore PdC
 sugg_air, sugg_water = get_suggested_hp(p_hp_tot_input)
 all_sugg = sugg_air + sugg_water
-
 hp_cost_disp = "N/A"
 hp_tooltip = "Nessuna pompa di calore trovata nel range specificato."
-
 if all_sugg:
-    # Troviamo la PdC con il prezzo minore
     best_hp = min(all_sugg, key=lambda x: x.get('price', float('inf')))
     hp_cost_disp = f"€ {best_hp['price']:,.0f}"
     hp_tooltip = f"MIGLIOR PREZZO:\n{best_hp['brand']} {best_hp['model']}\nPotenza: {best_hp['kw']} kW\nGas: {best_hp['gas']}"
 
-# --- VISUALIZZAZIONE ---
+# --- VISUALIZZAZIONE CRUSCOTTO ---
 st.subheader("📊 Analisi Prestazioni")
-
-# Nuova disposizione a griglia
-# RIGA 1
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Portata Target", f"{qp_lmin_target:.1f} L/min")
 c2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota coperta dalla batteria")
 c3.metric("Autonomia", autonomy_str, help="Durata alla portata di picco")
 c4.metric("Costo Batterie", f"€ {total_cost:,.0f}", help=cost_tooltip)
 
-# RIGA 2
 c1b, c2b, c3b, c4b = st.columns(4)
 c1b.metric(f"Salto Termico", f"{dt_target:.1f} °C")
 c2b.metric("Potenza PdC Calc.", f"{p_hp_tot_input:.1f} kW", help=f"Necessaria per ricarica in {recharge_min} min")
@@ -384,28 +353,23 @@ val_v40_disp = f"{total_v40_liters:.0f} L" if total_v40_liters < 99999 else "∞
 c3b.metric("Volume V40 Totale", val_v40_disp)
 c4b.metric("Costo PdC (Min)", hp_cost_disp, help=hp_tooltip)
 
-# --- SUGGERIMENTO POMPE DI CALORE ---
 if p_hp_tot_input > 0 or p_hp_tot_input == 0: 
     st.markdown("### 🔍 Suggerimento Pompe di Calore (Multi-Brand)")
     sc1, sc2 = st.columns(2)
-    
     with sc1:
         st.markdown("**🌬️ Aria / Acqua**")
         if sugg_air:
             for hp in sugg_air:
                 price_disp = f"€ {hp['price']:,.0f}" if 'price' in hp else "N/A"
                 st.info(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}] | Est.: {price_disp}")
-        else:
-            st.warning("Nessun modello trovato in questo range.")
-
+        else: st.warning("Nessun modello trovato in questo range.")
     with sc2:
         st.markdown("**💧 Acqua / Acqua (Geotermiche / Loop)**")
         if sugg_water:
             for hp in sugg_water:
                 price_disp = f"€ {hp['price']:,.0f}" if 'price' in hp else "N/A"
                 st.success(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}] | Est.: {price_disp}")
-        else:
-            st.warning("Nessun modello trovato in questo range.")
+        else: st.warning("Nessun modello trovato in questo range.")
 
 st.divider()
 
@@ -414,8 +378,6 @@ sys_flows, sys_powers, sys_temps, sys_v40_volumes = get_system_curves(config, t_
 
 if len(sys_flows) > 0:
     col_g1, col_g2, col_g3 = st.columns(3)
-    
-    # 1. POTENZA
     with col_g1:
         st.subheader("⚡ Potenza")
         fig1 = go.Figure()
@@ -425,8 +387,6 @@ if len(sys_flows) > 0:
         fig1.add_trace(go.Scatter(x=[qp_lmin_target], y=[p_req_batt], mode='markers', marker=dict(color=col_pt, size=14, line=dict(color='black', width=2)), name='Punto Lavoro', hovertemplate='Richiesta: %{x:.1f} L/min<br>Serve: %{y:.1f} kW<extra></extra>'))
         fig1.update_layout(xaxis_title="Portata (L/min)", yaxis_title="Potenza (kW)", margin=dict(l=20,r=20,t=30,b=20), height=350)
         st.plotly_chart(fig1, use_container_width=True)
-
-    # 2. TEMPERATURA
     with col_g2:
         st.subheader("🌡️ Temperatura")
         fig2 = go.Figure()
@@ -435,8 +395,6 @@ if len(sys_flows) > 0:
         fig2.add_trace(go.Scatter(x=[qp_lmin_target], y=[t_pt], mode='markers+text', marker=dict(color='orange', size=14, line=dict(color='black', width=2)), text=[f"{t_pt:.1f}°C"], textposition="top center", name='Punto Lavoro'))
         fig2.update_layout(xaxis_title="Portata (L/min)", yaxis_title="Temp (°C)", margin=dict(l=20,r=20,t=30,b=20), height=350)
         st.plotly_chart(fig2, use_container_width=True)
-
-    # 3. VOLUME V40
     with col_g3:
         st.subheader("💧 Volume V40 Totale")
         fig3 = go.Figure()
@@ -453,7 +411,118 @@ else:
 
 st.divider()
 
-# --- TABELLA MIX BATTERIE AGGIORNATA ---
+# --- GRAFICO SIMULAZIONE 24H (CON SOC E SMART REINTEGRO) ---
+with st.expander("📈 Simulazione Profilo Giornaliero & Smart Reintegro", expanded=True):
+    hours_day, hourly_flow_lmin, total_daily_L = get_daily_profile_curve(sim_people, sim_type)
+    
+    # 1. Setup Simulazione Minuto per Minuto
+    sim_minutes = 1440 # 24h * 60min
+    x_time = np.arange(sim_minutes) # 0..1439
+    
+    # Interpolazione del consumo orario (L/min) su base minuti
+    x_hours = np.linspace(0, 1440, 25) # 0, 60, 120... 1440
+    # hourly_flow_lmin ha 24 valori. Aggiungiamo il primo alla fine per chiudere il cerchio (grafico ciclico)
+    y_flow = hourly_flow_lmin + [hourly_flow_lmin[0]]
+    f_interp = interpolate.interp1d(x_hours, y_flow, kind='linear')
+    consumption_curve_min = f_interp(x_time) # L/min istantaneo per ogni minuto
+    
+    # 2. Parametri Batteria e PdC
+    tank_capacity_L = total_v40_liters if total_v40_liters < 99999 else 9999 # Limit for plot
+    # Calcolo portata di reintegro PdC (L/min) basata sulla potenza input
+    # p_hp_tot_input (kW) -> Energy (kJ/s) -> L/min @ dt_target
+    # Formula: L/min = (kW * 60) / (4.186 * dt)
+    hp_recharge_flow_lmin = (p_hp_tot_input * 60) / (4.186 * dt_target) if dt_target > 0 else 0
+    
+    # 3. Loop Simulazione (Logic: Smart Hysteresis)
+    current_vol = tank_capacity_L
+    soc_history = []
+    hp_status_history = []
+    
+    hp_on = False
+    start_threshold = tank_capacity_L * 0.7 # Accendi se < 70%
+    stop_threshold = tank_capacity_L * 0.98 # Spegni se > 98%
+    
+    for i in range(sim_minutes):
+        # Consumo
+        cons_L = consumption_curve_min[i] # Litri consumati in questo minuto
+        
+        # Logica PdC
+        if not hp_on:
+            if current_vol < start_threshold:
+                hp_on = True
+        else:
+            if current_vol >= stop_threshold:
+                hp_on = False
+        
+        # Produzione
+        prod_L = hp_recharge_flow_lmin if hp_on else 0
+        
+        # Bilancio
+        current_vol = current_vol - cons_L + prod_L
+        
+        # Limiti Fisici
+        if current_vol > tank_capacity_L: current_vol = tank_capacity_L
+        if current_vol < 0: current_vol = 0 # Empty tank alert!
+        
+        soc_history.append(current_vol)
+        hp_status_history.append(prod_L)
+
+    # 4. Creazione Grafico Combinato (Plotly Subplots)
+    fig_smart = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Area Consumo (Arancione)
+    fig_smart.add_trace(go.Scatter(
+        x=x_time/60, y=consumption_curve_min,
+        mode='lines', fill='tozeroy', name='Prelievo Utenza (L/min)',
+        line=dict(color='#ffaa00', width=1),
+        hovertemplate='Ora: %{x:.1f}h<br>Prelievo: %{y:.1f} L/min'
+    ), secondary_y=False)
+    
+    # Linea Produzione PdC (Verde - Step)
+    fig_smart.add_trace(go.Scatter(
+        x=x_time/60, y=hp_status_history,
+        mode='lines', name='Reintegro PdC (L/min)',
+        line=dict(color='#2a9d8f', width=2),
+        fill='tozeroy', fillcolor='rgba(42, 157, 143, 0.2)',
+        hovertemplate='Attiva: %{y:.1f} L/min'
+    ), secondary_y=False)
+    
+    # Linea SoC Batteria (Blu - Asse Secondario)
+    fig_smart.add_trace(go.Scatter(
+        x=x_time/60, y=soc_history,
+        mode='lines', name='Carica Batteria (Litri)',
+        line=dict(color='#007acc', width=3),
+        hovertemplate='Volume Disp.: %{y:.0f} L'
+    ), secondary_y=True)
+    
+    # Marker Start Reintegro
+    starts = [i/60 for i in range(1, sim_minutes) if hp_status_history[i] > 0 and hp_status_history[i-1] == 0]
+    start_y = [0] * len(starts)
+    fig_smart.add_trace(go.Scatter(
+        x=starts, y=start_y,
+        mode='markers', name='Start Reintegro',
+        marker=dict(symbol='triangle-up', size=12, color='green'),
+        hoverinfo='skip'
+    ), secondary_y=False)
+
+    # Layout
+    fig_smart.update_layout(
+        title=f"Strategia Smart Reintegro (Vol. Tot: {tank_capacity_L:.0f} L)",
+        xaxis_title="Ora del Giorno (0-24h)",
+        height=450,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    fig_smart.update_yaxes(title_text="Portata (L/min)", secondary_y=False)
+    fig_smart.update_yaxes(title_text="Volume Accumulato (L)", secondary_y=True, range=[0, tank_capacity_L*1.1])
+    
+    st.plotly_chart(fig_smart, use_container_width=True)
+    
+    st.info(f"""
+    **Strategia Suggerita:** Il sistema attiva la PdC da **{p_hp_tot_input:.1f} kW** quando l'accumulo scende sotto il **70%** ({start_threshold:.0f} L) 
+    e la spegne al **98%**. Questo garantisce acqua calda sempre disponibile minimizzando i cicli di accensione (visibili come aree verdi).
+    """)
+
+# --- TABELLA MIX BATTERIE ---
 table_rows = ""
 for qty, size in config:
     if qty > 0:
