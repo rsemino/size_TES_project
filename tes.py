@@ -78,11 +78,11 @@ HP_DATABASE = [
     {"brand": "Climer", "model": "EcoFlex EF02", "type": "Aria/Acqua", "kw": 2.2, "gas": "R134a/R513A", "price": 2600},
     {"brand": "Climer", "model": "EcoFlex EF04", "type": "Aria/Acqua", "kw": 3.8, "gas": "R134a/R513A", "price": 3100},
 
-    # --- SMALL ---
+    # --- ALTRE PICCOLE TAGLIE (< 4 kW) ---
     {"brand": "Panasonic", "model": "Aquarea (J Gen)", "type": "Aria/Acqua", "kw": 3.2, "gas": "R32", "price": 3900},
     {"brand": "Climer", "model": "EcoHeat", "type": "Aria/Acqua", "kw": 3.5, "gas": "R290", "price": 3500},
     
-    # --- STANDARD ---
+    # --- STANDARD (4 - 200kW) ---
     {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 8.0, "gas": "R290", "price": 5200},
     {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290", "price": 6800},
     {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 4.0, "gas": "R32", "price": 4200},
@@ -98,8 +98,6 @@ HP_DATABASE = [
     {"brand": "Samsung", "model": "EHS TDM Plus", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32", "price": 6200},
     {"brand": "LG", "model": "Therma V Split", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32", "price": 6500},
     {"brand": "Stiebel Eltron", "model": "WPL 25", "type": "Aria/Acqua", "kw": 14.0, "gas": "R410A", "price": 9500},
-
-    # --- COMMERCIAL ---
     {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 18.0, "gas": "R410A", "price": 9500},
     {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 13000},
     {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32", "price": 11000},
@@ -112,8 +110,6 @@ HP_DATABASE = [
     {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 40.0, "gas": "R32", "price": 15500},
     {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32", "price": 25000},
     {"brand": "Rhoss", "model": "WinPACK", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 12000},
-    
-    # --- INDUSTRIAL ---
     {"brand": "Climer", "model": "H Series", "type": "Aria/Acqua", "kw": 90.0, "gas": "R410A", "price": 28000},
     {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 85.0, "gas": "R32", "price": 29000},
     {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 110.0, "gas": "R32", "price": 36000},
@@ -130,8 +126,6 @@ HP_DATABASE = [
     {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 110.0, "gas": "R454B"},
     {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 160.0, "gas": "R454B"},
     {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 210.0, "gas": "R454B"},
-
-    # --- WATER ---
     {"brand": "Daikin", "model": "Altherma 3 GEO", "type": "Acqua/Acqua", "kw": 10.0, "gas": "R32", "price": 9500},
     {"brand": "Nibe", "model": "S1155", "type": "Acqua/Acqua", "kw": 12.0, "gas": "R407C", "price": 11000},
     {"brand": "Viessmann", "model": "Vitocal 300-G", "type": "Acqua/Acqua", "kw": 17.0, "gas": "R410A", "price": 13000},
@@ -225,8 +219,6 @@ def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
     return list(range(24)), hourly_flow_lmin, total_daily_vol
 
 def get_solar_window(zone):
-    # Definizione semplificata delle ore di picco in base alla zona climatica
-    # A/B (Sud): più ore. E/F (Nord): meno ore.
     windows = {
         "A": (9, 17), "B": (9, 17),
         "C": (10, 16), "D": (10, 16),
@@ -309,12 +301,27 @@ with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
     
     solar_zone = "C"
     pv_coverage = 0
+    
+    val_start_std = 70
+    val_stop = 98
+    val_start_sun = 95
+    val_start_night = 30
+    
     if recharge_strategy == "Autoconsumo Fotovoltaico":
         col_pv1, col_pv2 = st.columns(2)
         with col_pv1:
             solar_zone = st.selectbox("Fascia Climatica", ["A", "B", "C", "D", "E", "F"], index=2)
         with col_pv2:
             pv_coverage = st.number_input("Copertura PV (%)", 0, 100, 50, step=10)
+        
+        st.markdown("**Soglie Intervento (%)**")
+        start_soc_sun = st.slider("Avvio con Sole se carica < (%)", 0, 100, val_start_sun)
+        start_soc_night = st.slider("Avvio Notturno se carica < (%)", 0, 100, val_start_night)
+        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, val_stop)
+    else:
+        st.markdown("**Soglie Intervento (%)**")
+        start_soc_std = st.slider("Avvio Reintegro se carica < (%)", 0, 100, val_start_std)
+        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, val_stop)
 
 # --- CALCOLI PRINCIPALI ---
 config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
@@ -460,86 +467,78 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
     start_min_solar = s_start * 60
     end_min_solar = s_end * 60
     
-    # 3. Loop Simulazione
-    current_vol = tank_capacity_L
-    soc_history = []
-    hp_status_history = []
-    
-    hp_on = False
-    
-    # Contatori Energia
-    total_kwh_used = 0
-    solar_kwh_used = 0
-    grid_kwh_used = 0
-    
-    # Power per minuto (kW * 1min / 60) -> kWh per minuto
-    kwh_per_min = p_hp_tot_input / 60.0
-    
-    for i in range(sim_minutes):
-        # Determine Solar Availability
-        is_sunny = start_min_solar <= i <= end_min_solar
+    # 3. Funzione di Simulazione (per Warm-up e Run Finale)
+    def run_simulation_step(start_vol, start_hp_state):
+        curr_v = start_vol
+        is_hp_on = start_hp_state
+        soc_hist = []
+        hp_status_hist = []
+        tot_kwh = 0
+        sol_kwh = 0
+        grd_kwh = 0
+        kwh_per_m = p_hp_tot_input / 60.0
         
-        # Define Thresholds based on Strategy
-        if recharge_strategy == "Autoconsumo Fotovoltaico":
-            # Giorno: Forza accumulo (Start 95%)
-            # Notte: Ritarda accensione (Start 30%)
-            start_threshold = tank_capacity_L * 0.95 if is_sunny else tank_capacity_L * 0.30
-            stop_threshold = tank_capacity_L * 1.0 # Always fill
-        else:
-            # Standard
-            start_threshold = tank_capacity_L * 0.70
-            stop_threshold = tank_capacity_L * 0.98
+        for i in range(sim_minutes):
+            is_sunny = start_min_solar <= i <= end_min_solar
             
-        # Consumo
-        cons_L = consumption_curve_min[i]
-        
-        # Logica ON/OFF (Hysteresis)
-        if not hp_on:
-            if current_vol < start_threshold:
-                hp_on = True
-        else:
-            if current_vol >= stop_threshold:
-                hp_on = False
-        
-        # Produzione & Energia
-        prod_L = 0
-        if hp_on:
-            prod_L = hp_recharge_flow_lmin
-            total_kwh_used += kwh_per_min
-            if is_sunny and recharge_strategy == "Autoconsumo Fotovoltaico":
-                # Calcola quota solare
-                solar_part = kwh_per_min * (pv_coverage / 100.0)
-                grid_part = kwh_per_min - solar_part
-                solar_kwh_used += solar_part
-                grid_kwh_used += grid_part
+            if recharge_strategy == "Autoconsumo Fotovoltaico":
+                st_thr = tank_capacity_L * (start_soc_sun/100.0) if is_sunny else tank_capacity_L * (start_soc_night/100.0)
+                sp_thr = tank_capacity_L * (stop_soc/100.0)
             else:
-                grid_kwh_used += kwh_per_min
-        
-        # Bilancio idraulico
-        current_vol = current_vol - cons_L + prod_L
-        if current_vol > tank_capacity_L: current_vol = tank_capacity_L
-        if current_vol < 0: current_vol = 0 
-        
-        soc_history.append(current_vol)
-        hp_status_history.append(prod_L)
+                st_thr = tank_capacity_L * (start_soc_std/100.0)
+                sp_thr = tank_capacity_L * (stop_soc/100.0)
+            
+            cons_L = consumption_curve_min[i]
+            
+            if not is_hp_on:
+                if curr_v < st_thr: is_hp_on = True
+            else:
+                if curr_v >= sp_thr: is_hp_on = False
+            
+            prod_L = 0
+            if is_hp_on:
+                prod_L = hp_recharge_flow_lmin
+                tot_kwh += kwh_per_m
+                if is_sunny and recharge_strategy == "Autoconsumo Fotovoltaico":
+                    s_part = kwh_per_m * (pv_coverage / 100.0)
+                    sol_kwh += s_part
+                    grd_kwh += (kwh_per_m - s_part)
+                else:
+                    grd_kwh += kwh_per_m
+            
+            curr_v = curr_v - cons_L + prod_L
+            if curr_v > tank_capacity_L: curr_v = tank_capacity_L
+            if curr_v < 0: curr_v = 0
+            
+            soc_hist.append(curr_v)
+            hp_status_hist.append(prod_L)
+            
+        return soc_hist, hp_status_hist, curr_v, is_hp_on, tot_kwh, sol_kwh, grd_kwh
+
+    # Warm-up Day (per trovare lo stato iniziale corretto)
+    _, _, end_vol_0, end_state_0, _, _, _ = run_simulation_step(tank_capacity_L * 0.5, False)
+    
+    # Run Ufficiale
+    soc_history, hp_status_history, _, _, total_kwh_used, solar_kwh_used, grid_kwh_used = run_simulation_step(end_vol_0, end_state_0)
 
     # 4. Grafico
     fig_smart = make_subplots(specs=[[{"secondary_y": True}]])
     
-    # Area Solar Window (Solo se attivo PV)
+    # Area Solar Window
     if recharge_strategy == "Autoconsumo Fotovoltaico":
         fig_smart.add_vrect(
             x0=s_start, x1=s_end,
-            fillcolor="yellow", opacity=0.15,
+            fillcolor="yellow", opacity=0.4,
             layer="below", line_width=0,
             annotation_text="Solar Window", annotation_position="top left"
         )
     
-    # Consumo
+    # Consumo (Rosso)
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=consumption_curve_min,
         mode='lines', fill='tozeroy', name='Prelievo Utenza',
-        line=dict(color='#ffaa00', width=1)
+        line=dict(color='#ff0000', width=1),
+        fillcolor='rgba(255, 0, 0, 0.2)'
     ), secondary_y=False)
     
     # Produzione PdC
@@ -586,8 +585,8 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
     kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.metric("Energia Totale PdC", f"{total_kwh_used:.1f} kWh/giorno")
     if recharge_strategy == "Autoconsumo Fotovoltaico":
-        kpi2.metric("Da Fotovoltaico", f"{solar_kwh_used:.1f} kWh", delta=f"{(solar_kwh_used/total_kwh_used)*100:.0f}%")
-        kpi3.metric("Da Rete", f"{grid_kwh_used:.1f} kWh", delta=f"-{(grid_kwh_used/total_kwh_used)*100:.0f}%", delta_color="inverse")
+        kpi2.metric("Da Fotovoltaico", f"{solar_kwh_used:.1f} kWh", delta=f"{(solar_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%")
+        kpi3.metric("Da Rete", f"{grid_kwh_used:.1f} kWh", delta=f"-{(grid_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%", delta_color="inverse")
     else:
         kpi2.metric("Da Rete", f"{total_kwh_used:.1f} kWh")
 
