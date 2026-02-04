@@ -29,7 +29,7 @@ if 'pv_start_night' not in st.session_state: st.session_state.pv_start_night = 3
 if 'pv_stop' not in st.session_state: st.session_state.pv_stop = 98
 
 # ==========================================
-#  SEZIONE FUNZIONI (DEFINITE PRIMA DELL'USO)
+#  SEZIONE FUNZIONI
 # ==========================================
 
 def manage_qty(key_name, label):
@@ -618,58 +618,45 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
     cumulative_consumption = np.cumsum(consumption_curve_min)
     cumulative_production = np.cumsum(hp_status_history)
     
-    # Difference (Net Contribution)
-    # Positive = Battery Filling (Surplus), Negative = Battery Emptying (Deficit)
-    # Offset by initial state to make it relative to 0 start for clarity?
-    # Or simple subtraction: CumulProd - CumulCons.
-    cumulative_diff = cumulative_production - cumulative_consumption
+    # Calculate fills for cumulative graph
+    y_fill_green = np.where(cumulative_production > cumulative_consumption, cumulative_production, cumulative_consumption)
+    y_fill_red = np.where(cumulative_consumption > cumulative_production, cumulative_consumption, cumulative_production)
 
     # 4. Grafico
     fig_smart = make_subplots(
         rows=2, cols=1, 
         shared_xaxes=True,
         vertical_spacing=0.1,
-        row_heights=[0.7, 0.3],
+        row_heights=[0.6, 0.4],
         specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
     )
     
-    # --- ROW 1: MAIN SIMULATION ---
-    # Area Solar Curve (Background Giallo Sfumato)
+    # --- ROW 1: MAIN SIMULATION (INSTANTANEOUS) ---
+    # Area Solar Curve
     if recharge_strategy == "Autoconsumo Fotovoltaico":
         fig_smart.add_trace(go.Scatter(
-            x=x_time/60, y=solar_profile_norm * tank_capacity_L, # Scalato visivamente
+            x=x_time/60, y=solar_profile_norm * tank_capacity_L, # Scalato
             mode='lines', fill='tozeroy', name='Produzione PV (Profilo)',
             line=dict(color='yellow', width=0),
-            fillcolor='rgba(255, 215, 0, 0.4)', # Gold con opacità maggiore
+            fillcolor='rgba(255, 215, 0, 0.4)',
             hoverinfo='skip'
         ), row=1, col=1, secondary_y=True)
     
-    # Consumo (Rosso)
+    # Consumo Istantaneo (Rosso)
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=consumption_curve_min,
-        mode='lines', fill='tozeroy', name='Prelievo Utenza',
+        mode='lines', fill='tozeroy', name='Prelievo Istantaneo',
         line=dict(color='#ff0000', width=1),
         fillcolor='rgba(255, 0, 0, 0.2)'
     ), row=1, col=1, secondary_y=False)
     
-    # Produzione PdC
+    # Produzione PdC Istantanea
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=hp_status_history,
         mode='lines', name='Reintegro PdC',
         line=dict(color='#2a9d8f', width=2),
         fill='tozeroy', fillcolor='rgba(42, 157, 143, 0.2)'
     ), row=1, col=1, secondary_y=False)
-    
-    # SoC
-    fig_smart.add_trace(go.Scatter(
-        x=x_time/60, y=soc_history,
-        mode='lines', name='Carica Batteria',
-        line=dict(color='#007acc', width=3)
-    ), row=1, col=1, secondary_y=True)
-    
-    # Cumulative Consumption (Dotted Red) - Optional on Top, maybe redundant with bottom graph
-    # Keeping it here as requested previously or moving to bottom? 
-    # Let's keep specific curves on top.
     
     # Reference Lines
     max_sys_flow = 0
@@ -682,33 +669,78 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
             
     fig_smart.add_trace(go.Scatter(x=[0, 24], y=[max_sys_flow, max_sys_flow], mode='lines', name='Capacità Max', line=dict(color='#2a9d8f', width=2, dash='dash')), row=1, col=1, secondary_y=False)
     
-    # --- ROW 2: DIFFERENCE / NET BALANCE ---
+    # --- ROW 2: CUMULATIVE & SOC ---
     
-    # Net Balance (Prod - Cons)
-    # Fill Green if positive, Red if negative requires 2 traces or split. 
-    # Simple Area for now.
+    # 1. SoC Battery (Moved Here)
     fig_smart.add_trace(go.Scatter(
-        x=x_time/60, y=cumulative_diff,
-        mode='lines', name='Bilancio (Prod - Cons)',
-        line=dict(color='#663399', width=2),
-        fill='tozeroy'
+        x=x_time/60, y=soc_history,
+        mode='lines', name='Carica Batteria (SoC)',
+        line=dict(color='#007acc', width=3)
     ), row=2, col=1)
     
-    # Add Zero Line
-    fig_smart.add_shape(type="line", x0=0, y0=0, x1=24, y1=0, line=dict(color="gray", width=1, dash="dash"), row=2, col=1)
+    # 2. Cumulative Consumption (Red Line)
+    fig_smart.add_trace(go.Scatter(
+        x=x_time/60, y=cumulative_consumption,
+        mode='lines', name='Cumulato Prelievo',
+        line=dict(color='#d62728', width=2)
+    ), row=2, col=1)
+    
+    # 3. Fill Green Area (Surplus) -> Fill from CumProd down to CumCons (visually)
+    # We plot the "Max of both" and fill down to consumption. 
+    # But Plotly fill logic is simpler: Fill to previous trace.
+    # Let's use simple separate traces for lines and filled areas might be tricky in subplots without messing legend.
+    # Simplified approach for visual clarity:
+    
+    # Green Fill (Surplus)
+    fig_smart.add_trace(go.Scatter(
+        x=x_time/60, y=y_fill_green,
+        mode='lines', line=dict(width=0),
+        fill='tonexty', fillcolor='rgba(44, 160, 44, 0.2)', # Green light
+        showlegend=False, hoverinfo='skip'
+    ), row=2, col=1)
+    
+    # Cumulative Production (Green Line) - Plotted AFTER fill so it's on top
+    fig_smart.add_trace(go.Scatter(
+        x=x_time/60, y=cumulative_production,
+        mode='lines', name='Cumulato Produzione',
+        line=dict(color='#2ca02c', width=2)
+    ), row=2, col=1)
+    
+    # Red Fill (Deficit) - Note: This simple fill logic might overlap. 
+    # For perfect coloring we need 'tonexty' relative to specific traces.
+    # Since CumProd and CumCons cross, simple 'tonexty' might fill wrong side.
+    # Correct way: Plot Cons, Plot Prod, Fill Prod to Cons? 
+    # Plotly fills 'tozeroy' or 'tonexty'.
+    # If we want multicolor fill between two lines:
+    # We add a trace that follows the TOP curve, and fill to the BOTTOM curve? No.
+    # We add two traces: One for green area (where Prod > Cons), one for Red area (where Cons > Prod).
+    
+    # Re-doing fills properly:
+    # Red Area: Fill between Cons and Prod WHERE Cons > Prod.
+    # We plot 'y_fill_red' (which is max of them when cons > prod) and fill down to 'cumulative_production'?
+    # No, that's complex. Let's stick to lines for clarity + SoC. 
+    # The visual request was specific: "Area sottesa rossa se prelievo > produzione...".
+    # I will use a single fill trace `y=cumulative_consumption` filled to `cumulative_production`?
+    # No, Plotly allows one color.
+    # I'll stick to the previous robust method:
+    # 1. Plot Cum Consumption.
+    # 2. Plot Cum Production (Green Line).
+    # 3. Add invisible trace following 'y_fill_green' filled to Cum Cons (Green Area).
+    # 4. Add invisible trace following 'y_fill_red' filled to Cum Prod (Red Area).
+    
+    # This creates the visual effect requested.
+    fig_smart.add_trace(go.Scatter(x=x_time/60, y=y_fill_red, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(214, 39, 40, 0.2)', showlegend=False), row=2, col=1) # Fills to prev (Cum Prod)
 
-    # Layout
     fig_smart.update_layout(
         title=f"Strategia: {recharge_strategy} | PVGIS: {daily_kwh_kwp:.1f} kWh/kWp (Media Mensile)",
-        height=600,
+        height=700,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     
     # Axis Titles
     fig_smart.update_xaxes(title_text="Ora del Giorno (0-24h)", row=2, col=1)
     fig_smart.update_yaxes(title_text="Portata (L/min)", row=1, col=1, secondary_y=False)
-    fig_smart.update_yaxes(title_text="Volume (L)", row=1, col=1, secondary_y=True, range=[0, tank_capacity_L*1.1])
-    fig_smart.update_yaxes(title_text="Delta Volume (L)", row=2, col=1)
+    fig_smart.update_yaxes(title_text="Volume (L)", row=2, col=1)
     
     st.plotly_chart(fig_smart, use_container_width=True)
     st.caption("Nota: I profili orari sono **stime statistiche derivate da standard ASHRAE e UNI 9182**. La norma EN 806-3 calcola il picco istantaneo.")
