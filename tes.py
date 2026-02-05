@@ -27,6 +27,8 @@ if 'address_found' not in st.session_state: st.session_state.address_found = "Ro
 if 'pv_start_sun' not in st.session_state: st.session_state.pv_start_sun = 95
 if 'pv_start_night' not in st.session_state: st.session_state.pv_start_night = 30
 if 'pv_stop' not in st.session_state: st.session_state.pv_stop = 98
+if 'std_start' not in st.session_state: st.session_state.std_start = 70
+if 'std_stop' not in st.session_state: st.session_state.std_stop = 98
 
 # ==========================================
 #  SEZIONE FUNZIONI
@@ -348,6 +350,34 @@ with st.sidebar.expander("🔋 3. Batterie", expanded=True):
         else:
             st.error("Nessuna combinazione trovata.")
 
+# --- CALCOLI PRINCIPALI ---
+# (Spostati QUI, prima della sezione di simulazione che li usa)
+config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
+          (st.session_state.qty_20, 20), (st.session_state.qty_40, 40)]
+total_cost = sum(q*prices[s] for q,s in config)
+
+total_energy_e0 = 0
+for qty, size in config:
+    v0_nominal = params_v40[size]['V0']
+    if t_pcm >= 58: v0_nominal /= 0.76 
+    e0_single = (v0_nominal * 4.186 * dt_target) / 3600.0
+    total_energy_e0 += (e0_single * qty)
+
+recharge_hours = recharge_min / 60.0
+p_hp_tot_input = total_energy_e0 / recharge_hours if recharge_hours > 0 and total_energy_e0 > 0 else 0.0
+
+p_load = qp_lmin_target * dt_target * 0.0697
+p_req_batt = max(0, p_load - p_hp_tot_input)
+
+net_power_deficit = p_load - p_hp_tot_input
+if net_power_deficit > 0.1:
+    total_v40_liters = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
+    autonomy_min = total_v40_liters / qp_lmin_target if qp_lmin_target > 0 else 0
+    autonomy_str = f"{autonomy_min:.1f} min"
+else:
+    total_v40_liters = 99999
+    autonomy_str = "∞ (Illimitata)"
+
 # --- SIMULAZIONE 24H INPUTS ---
 with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
     sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
@@ -401,35 +431,78 @@ with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
         stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, key='pv_stop')
     else:
         st.markdown("**Soglie Intervento (%)**")
-        start_soc_std = st.slider("Avvio Reintegro se carica < (%)", 0, 100, val_start_std)
-        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, 98)
+        
+        if st.button("✨ Ottimizza Soglie (Min. Energia)"):
+            best_kwh = float('inf')
+            best_start = 70
+            best_stop = 98
+            
+            # Parametri temporanei per simulazione
+            # Usa i valori calcolati globalmente
+            tank_cap_opt = total_energy_e0 / (4.186 * dt_target) * 3600.0 if dt_target > 0 else 999
+            if net_power_deficit > 0.1:
+                tank_cap_opt = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
+            
+            hp_flow_opt = (p_hp_tot_input * 60) / (4.186 * dt_target) if dt_target > 0 else 0
+            
+            # Get profile
+            _, hourly_flow_opt, _ = get_daily_profile_curve(sim_people, sim_type)
+            x_h = np.linspace(0, 1440, 25)
+            y_f = hourly_flow_opt + [hourly_flow_opt[0]]
+            f_int = interpolate.interp1d(x_h, y_f, kind='linear')
+            cons_curve_opt = f_int(np.arange(1440))
+            
+            # Grid Search
+            for start_test in range(10, 90, 10):
+                for stop_test in range(start_test + 10, 101, 10):
+                    # Simulation Logic (Simplified for optimization)
+                    # Warmup
+                    curr_v = tank_cap_opt * 0.5
+                    is_on = False
+                    for _ in range(1440): # Warmup
+                        st_th = tank_cap_opt * (start_test/100.0)
+                        sp_th = tank_cap_opt * (stop_test/100.0)
+                        cons = cons_curve_opt[_]
+                        if not is_on: 
+                            if curr_v < st_th: is_on = True
+                        else:
+                            if curr_v >= sp_th: is_on = False
+                        prod = hp_flow_opt if is_on else 0
+                        curr_v = curr_v - cons + prod
+                        if curr_v > tank_cap_opt: curr_v = tank_cap_opt
+                        if curr_v < 0: curr_v = 0
+                    
+                    # Real Run
+                    kwh_run = 0
+                    min_soc = tank_cap_opt
+                    for i in range(1440):
+                        st_th = tank_cap_opt * (start_test/100.0)
+                        sp_th = tank_cap_opt * (stop_test/100.0)
+                        cons = cons_curve_opt[i]
+                        if not is_on: 
+                            if curr_v < st_th: is_on = True
+                        else:
+                            if curr_v >= sp_th: is_on = False
+                        prod = hp_flow_opt if is_on else 0
+                        if is_on: kwh_run += (p_hp_tot_input / 60.0)
+                        curr_v = curr_v - cons + prod
+                        if curr_v > tank_cap_opt: curr_v = tank_cap_opt
+                        if curr_v < 0: curr_v = 0
+                        if curr_v < min_soc: min_soc = curr_v
+                    
+                    # Evaluate
+                    if min_soc > 0: # Valid strategy (no cold water)
+                        if kwh_run < best_kwh:
+                            best_kwh = kwh_run
+                            best_start = start_test
+                            best_stop = stop_test
+            
+            st.session_state.std_start = best_start
+            st.session_state.std_stop = best_stop
+            st.rerun()
 
-# --- CALCOLI PRINCIPALI ---
-config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
-          (st.session_state.qty_20, 20), (st.session_state.qty_40, 40)]
-total_cost = sum(q*prices[s] for q,s in config)
-
-total_energy_e0 = 0
-for qty, size in config:
-    v0_nominal = params_v40[size]['V0']
-    if t_pcm >= 58: v0_nominal /= 0.76 
-    e0_single = (v0_nominal * 4.186 * dt_target) / 3600.0
-    total_energy_e0 += (e0_single * qty)
-
-recharge_hours = recharge_min / 60.0
-p_hp_tot_input = total_energy_e0 / recharge_hours if recharge_hours > 0 and total_energy_e0 > 0 else 0.0
-
-p_load = qp_lmin_target * dt_target * 0.0697
-p_req_batt = max(0, p_load - p_hp_tot_input)
-
-net_power_deficit = p_load - p_hp_tot_input
-if net_power_deficit > 0.1:
-    total_v40_liters = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
-    autonomy_min = total_v40_liters / qp_lmin_target if qp_lmin_target > 0 else 0
-    autonomy_str = f"{autonomy_min:.1f} min"
-else:
-    total_v40_liters = 99999
-    autonomy_str = "∞ (Illimitata)"
+        start_soc_std = st.slider("Avvio Reintegro se carica < (%)", 0, 100, key='std_start')
+        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, key='std_stop')
 
 cost_tooltip = "DETTAGLIO COSTI:\n"
 if total_cost > 0:
@@ -618,6 +691,9 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
     cumulative_consumption = np.cumsum(consumption_curve_min)
     cumulative_production = np.cumsum(hp_status_history)
     
+    # Average User Flow (L/min) over 24h
+    avg_user_flow_lmin = cumulative_consumption[-1] / 1440.0
+    
     # Calculate fills for cumulative graph
     y_fill_green = np.where(cumulative_production > cumulative_consumption, cumulative_production, cumulative_consumption)
     y_fill_red = np.where(cumulative_consumption > cumulative_production, cumulative_consumption, cumulative_production)
@@ -635,7 +711,7 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
     # Area Solar Curve
     if recharge_strategy == "Autoconsumo Fotovoltaico":
         fig_smart.add_trace(go.Scatter(
-            x=x_time/60, y=solar_profile_norm * tank_capacity_L, # Scalato
+            x=x_time/60, y=solar_profile_norm * tank_capacity_L, # Scalato visivamente
             mode='lines', fill='tozeroy', name='Produzione PV (Profilo)',
             line=dict(color='yellow', width=0),
             fillcolor='rgba(255, 215, 0, 0.4)',
@@ -658,7 +734,21 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         fill='tozeroy', fillcolor='rgba(42, 157, 143, 0.2)'
     ), row=1, col=1, secondary_y=False)
     
-    # Reference Lines
+    # Target Flow Line (QP Target)
+    fig_smart.add_trace(go.Scatter(
+        x=[0, 24], y=[qp_lmin_target, qp_lmin_target],
+        mode='lines', name='Target di Picco (EN 806)',
+        line=dict(color='black', width=2, dash='dashdot')
+    ), row=1, col=1, secondary_y=False)
+    
+    # Average User Flow Line (NEW)
+    fig_smart.add_trace(go.Scatter(
+        x=[0, 24], y=[avg_user_flow_lmin, avg_user_flow_lmin],
+        mode='lines', name='Portata Media Utenza',
+        line=dict(color='darkred', width=2, dash='dot')
+    ), row=1, col=1, secondary_y=False)
+    
+    # Reference Lines (Max Capacity)
     max_sys_flow = 0
     nom_sys_flow = 0
     for qty, size in config:
@@ -667,7 +757,7 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
             max_sys_flow += (last_pt[0] * qty)
             nom_sys_flow += (NOMINAL_FLOWS[size] * qty)
             
-    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[max_sys_flow, max_sys_flow], mode='lines', name='Capacità Max', line=dict(color='#2a9d8f', width=2, dash='dash')), row=1, col=1, secondary_y=False)
+    fig_smart.add_trace(go.Scatter(x=[0, 24], y=[max_sys_flow, max_sys_flow], mode='lines', name='Capacità Max Batterie', line=dict(color='#2a9d8f', width=2, dash='dash')), row=1, col=1, secondary_y=False)
     
     # --- ROW 2: CUMULATIVE & SOC ---
     
@@ -685,12 +775,6 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         line=dict(color='#d62728', width=2)
     ), row=2, col=1)
     
-    # 3. Fill Green Area (Surplus) -> Fill from CumProd down to CumCons (visually)
-    # We plot the "Max of both" and fill down to consumption. 
-    # But Plotly fill logic is simpler: Fill to previous trace.
-    # Let's use simple separate traces for lines and filled areas might be tricky in subplots without messing legend.
-    # Simplified approach for visual clarity:
-    
     # Green Fill (Surplus)
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=y_fill_green,
@@ -706,30 +790,8 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         line=dict(color='#2ca02c', width=2)
     ), row=2, col=1)
     
-    # Red Fill (Deficit) - Note: This simple fill logic might overlap. 
-    # For perfect coloring we need 'tonexty' relative to specific traces.
-    # Since CumProd and CumCons cross, simple 'tonexty' might fill wrong side.
-    # Correct way: Plot Cons, Plot Prod, Fill Prod to Cons? 
-    # Plotly fills 'tozeroy' or 'tonexty'.
-    # If we want multicolor fill between two lines:
-    # We add a trace that follows the TOP curve, and fill to the BOTTOM curve? No.
-    # We add two traces: One for green area (where Prod > Cons), one for Red area (where Cons > Prod).
-    
-    # Re-doing fills properly:
-    # Red Area: Fill between Cons and Prod WHERE Cons > Prod.
-    # We plot 'y_fill_red' (which is max of them when cons > prod) and fill down to 'cumulative_production'?
-    # No, that's complex. Let's stick to lines for clarity + SoC. 
-    # The visual request was specific: "Area sottesa rossa se prelievo > produzione...".
-    # I will use a single fill trace `y=cumulative_consumption` filled to `cumulative_production`?
-    # No, Plotly allows one color.
-    # I'll stick to the previous robust method:
-    # 1. Plot Cum Consumption.
-    # 2. Plot Cum Production (Green Line).
-    # 3. Add invisible trace following 'y_fill_green' filled to Cum Cons (Green Area).
-    # 4. Add invisible trace following 'y_fill_red' filled to Cum Prod (Red Area).
-    
-    # This creates the visual effect requested.
-    fig_smart.add_trace(go.Scatter(x=x_time/60, y=y_fill_red, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(214, 39, 40, 0.2)', showlegend=False), row=2, col=1) # Fills to prev (Cum Prod)
+    # Red Fill (Deficit)
+    fig_smart.add_trace(go.Scatter(x=x_time/60, y=y_fill_red, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(214, 39, 40, 0.2)', showlegend=False), row=2, col=1) 
 
     fig_smart.update_layout(
         title=f"Strategia: {recharge_strategy} | PVGIS: {daily_kwh_kwp:.1f} kWh/kWp (Media Mensile)",
@@ -740,10 +802,11 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
     # Axis Titles
     fig_smart.update_xaxes(title_text="Ora del Giorno (0-24h)", row=2, col=1)
     fig_smart.update_yaxes(title_text="Portata (L/min)", row=1, col=1, secondary_y=False)
+    fig_smart.update_yaxes(title_text="Volume (L)", row=1, col=1, secondary_y=True, range=[0, tank_capacity_L*1.1])
     fig_smart.update_yaxes(title_text="Volume (L)", row=2, col=1)
     
     st.plotly_chart(fig_smart, use_container_width=True)
-    st.caption("Nota: I profili orari sono **stime statistiche derivate da standard ASHRAE e UNI 9182**. La norma EN 806-3 calcola il picco istantaneo.")
+    st.caption(f"Nota: La portata media dell'utenza calcolata è di **{avg_user_flow_lmin:.1f} L/min** (Linea rossa tratteggiata), mentre il picco normativo è **{qp_lmin_target:.1f} L/min**.")
     
     # KPI Energetici
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
