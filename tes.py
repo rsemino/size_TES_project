@@ -12,7 +12,7 @@ from datetime import datetime
 
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Simulatore i-TES Pro", layout="wide")
-st.title("🚰 Simulatore i-TES: Site-Specific & PVGIS")
+st.title("🚰 Simulatore i-TES: Site-Specific & Confronto Tecnologico")
 
 # --- GESTIONE STATO ---
 if 'qty_6' not in st.session_state: st.session_state.qty_6 = 0
@@ -23,15 +23,15 @@ if 'lat' not in st.session_state: st.session_state.lat = 41.9028 # Default Roma
 if 'lon' not in st.session_state: st.session_state.lon = 12.4964
 if 'address_found' not in st.session_state: st.session_state.address_found = "Roma, Italia (Default)"
 
-# Inizializzazione Slider Strategia PV
-if 'pv_start_sun' not in st.session_state: st.session_state.pv_start_sun = 95
-if 'pv_start_night' not in st.session_state: st.session_state.pv_start_night = 30
-if 'pv_stop' not in st.session_state: st.session_state.pv_stop = 98
+# Inizializzazione Slider Strategie
+if 'pv_start_sun' not in st.session_state: st.session_state.pv_start_sun = 50
+if 'pv_start_night' not in st.session_state: st.session_state.pv_start_night = 15
+if 'pv_stop' not in st.session_state: st.session_state.pv_stop = 100
 if 'std_start' not in st.session_state: st.session_state.std_start = 70
 if 'std_stop' not in st.session_state: st.session_state.std_stop = 98
 
 # ==========================================
-#  SEZIONE FUNZIONI
+#  SEZIONE FUNZIONI (DEFINITE GLOBALMENTE)
 # ==========================================
 
 def manage_qty(key_name, label):
@@ -49,11 +49,7 @@ def manage_qty(key_name, label):
             st.rerun()
 
 def get_solar_window(zone):
-    windows = {
-        "A": (9, 17), "B": (9, 17),
-        "C": (10, 16), "D": (10, 16),
-        "E": (11, 15), "F": (11, 15)
-    }
+    windows = {"A": (9, 17), "B": (9, 17), "C": (10, 16), "D": (10, 16), "E": (11, 15), "F": (11, 15)}
     return windows.get(zone, (10, 16))
 
 def get_coordinates(address):
@@ -70,17 +66,12 @@ def get_coordinates(address):
 
 def get_pvgis_data(lat, lon, month_idx=0):
     url = "https://re.jrc.ec.europa.eu/api/v5_2/PVcalc"
-    params = {
-        'lat': lat, 'lon': lon, 'peakpower': 1, 'loss': 14,
-        'outputformat': 'json', 'angle': 35, 'aspect': 0 
-    }
+    params = {'lat': lat, 'lon': lon, 'peakpower': 1, 'loss': 14, 'outputformat': 'json', 'angle': 35, 'aspect': 0}
     try:
         r = requests.get(url, params=params)
         if r.status_code == 200:
             data = r.json()
-            monthly_data = data['outputs']['monthly']['fixed']
-            ed_kwh = monthly_data[month_idx]['E_d']
-            return ed_kwh
+            return data['outputs']['monthly']['fixed'][month_idx]['E_d']
     except:
         pass
     return 3.5 
@@ -151,7 +142,7 @@ def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
     profiles = {
         "Residenziale": [0.5, 0.2, 0.1, 0.1, 0.5, 2.0, 8.0, 12.0, 9.0, 6.0, 5.0, 4.0, 5.0, 4.0, 3.0, 3.0, 4.0, 6.0, 10.0, 11.0, 5.0, 2.0, 1.0, 0.6],
         "Ufficio":      [0, 0, 0, 0, 0, 0, 2, 8, 15, 12, 10, 15, 12, 10, 8, 5, 3, 0, 0, 0, 0, 0, 0, 0],
-        "Hotel":        [1, 0.5, 0.5, 0.5, 1, 3, 10, 15, 12, 8, 5, 4, 3, 3, 3, 4, 6, 8, 12, 8, 5, 3, 2, 1]
+        "Hotel":        [1, 0.5, 0.5, 0.5, 1, 3, 10, 15, 12, 8, 5, 4, 3, 3, 4, 6, 8, 12, 8, 5, 3, 2, 1]
     }
     selected_profile = profiles.get(building_type, profiles["Residenziale"])
     factor = 100.0 / sum(selected_profile)
@@ -159,8 +150,152 @@ def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
     hourly_flow_lmin = [val / 60.0 for val in hourly_flow]
     return list(range(24)), hourly_flow_lmin, total_daily_vol
 
+def calculate_water_tank_config(target_v40, t_store, t_net, db_to_use):
+    if t_store <= 40: return None, 0, 0, 0
+    factor = (t_store - t_net) / (40 - t_net)
+    if factor <= 0: return None, 0, 0, 0
+    needed_real_vol = target_v40 / factor
+    sorted_db = sorted(db_to_use, key=lambda k: k['vol'], reverse=True)
+    max_tank = sorted_db[0]
+    selected_tank = None
+    qty = 1
+    if needed_real_vol <= max_tank['vol']:
+        valid_tanks = [t for t in sorted_db if t['vol'] >= needed_real_vol]
+        if valid_tanks: selected_tank = min(valid_tanks, key=lambda x: x['vol'])
+        else: selected_tank = max_tank 
+    else:
+        selected_tank = max_tank
+        qty = math.ceil(needed_real_vol / max_tank['vol'])
+    total_vol = selected_tank['vol'] * qty
+    total_price = selected_tank['price'] * qty
+    return selected_tank, qty, total_vol, total_price
+
+def calc_dispersion_kwh(volume_l, current_temp, ambient_temp=20.0, use_sanicube_data=False):
+    if volume_l <= 0: return 0.0
+    delta_t = max(0, current_temp - ambient_temp)
+    
+    if use_sanicube_data:
+        ref_loss_per_liter = 1.4 / 500.0 
+        current_loss_per_liter = ref_loss_per_liter * (delta_t / 40.0)
+        daily_loss = current_loss_per_liter * volume_l
+        return daily_loss / 1440.0 
+    else:
+        vol_m3 = volume_l / 1000.0
+        radius = (vol_m3 / (4 * math.pi))**(1/3)
+        area_m2 = 10 * math.pi * (radius**2)
+        u_value = 0.35 
+        power_loss_w = u_value * area_m2 * delta_t
+        energy_loss_kwh = (power_loss_w / 1000.0) / 60.0
+        return energy_loss_kwh
+
+def estimate_cop(t_target):
+    base_cop = 3.2
+    base_t = 50.0
+    diff = t_target - base_t
+    penalty_factor = 0.025 
+    new_cop = base_cop * (1 - (diff * penalty_factor))
+    return max(1.5, new_cop)
+
+# --- FUNZIONI SIMULAZIONE ---
+def run_pcm_plot_data(soc_history_data, pcm_temp_func, t_pcm_val, t_in_val, consumption_data):
+    curr_v = soc_history_data[0]
+    soc_list = []
+    temp_list = []
+    for i in range(len(soc_history_data)):
+        cons_L = consumption_data[i]
+        curr_v = soc_history_data[i] 
+        soc_list.append(curr_v)
+        if cons_L > 0.1 and curr_v > 0:
+            try: real_temp = float(pcm_temp_func(cons_L))
+            except: real_temp = t_pcm_val
+            temp_list.append(min(real_temp, t_pcm_val))
+        elif curr_v > 0:
+            temp_list.append(t_pcm_val)
+        else:
+            temp_list.append(t_in_val + (t_pcm_val - t_in_val) * 0.1) 
+    return soc_list, temp_list
+
+def run_simulation_step_water(start_vol, start_hp_state, water_tank_vol_total, consumption_curve_min, hp_recharge_flow_lmin, kwh_per_m, t_water_set, t_in, is_sanicube=False):
+    curr_v = start_vol
+    is_hp_on = start_hp_state
+    soc_hist = []
+    temp_hist = []
+    tot_kwh = 0
+    cycle_count = 0
+    sim_minutes = len(consumption_curve_min)
+
+    for i in range(sim_minutes):
+        curr_temp = t_in + (curr_v / water_tank_vol_total) * (t_water_set - t_in)
+        loss_kwh = calc_dispersion_kwh(water_tank_vol_total, curr_temp, 20.0, use_sanicube_data=is_sanicube)
+        delta_T_sys = t_water_set - t_in
+        loss_liters = 0
+        if delta_T_sys > 0:
+            loss_liters = loss_kwh / (delta_T_sys * 0.00116)
+        
+        cons_L = consumption_curve_min[i] + loss_liters
+        st_thr = water_tank_vol_total * 0.85
+        sp_thr = water_tank_vol_total * 1.0
+        
+        if not is_hp_on:
+            if curr_v < st_thr: 
+                is_hp_on = True
+                cycle_count += 1
+        else:
+            if curr_v >= sp_thr: is_hp_on = False
+        
+        prod_L = hp_recharge_flow_lmin if is_hp_on else 0
+        if is_hp_on: tot_kwh += kwh_per_m
+        
+        curr_v = curr_v - cons_L + prod_L
+        if curr_v > water_tank_vol_total: curr_v = water_tank_vol_total
+        if curr_v < 0: curr_v = 0
+        
+        soc_hist.append(curr_v)
+        temp_hist.append(curr_temp)
+        
+    return soc_hist, temp_hist, curr_v, is_hp_on, tot_kwh, cycle_count
+
+def get_suggested_hp(target_kw, target_temp):
+    if target_kw <= 0: return []
+    valid_hps = []
+    search_min = target_kw * 0.8
+    limit_upper = target_kw * 2.5 
+    for hp in HP_DATABASE:
+        if search_min <= hp['kw'] < limit_upper:
+             if hp.get('max_t', 55) >= target_temp:
+                 valid_hps.append(hp)
+    valid_hps.sort(key=lambda x: x.get('price', float('inf')))
+    return valid_hps
+
+# --- FUNZIONE CURVE REALI SANICUBE (V40) ---
+def get_sanicube_v40_at_flow(flow_lmin, t_store):
+    # Dati grezzi estratti dal documento HYC 544/32/0 (simile a 500L)
+    data_500 = {
+        50: {11: 1550, 12: 990, 15: 530, 20: 290, 25: 180, 30: 100, 35: 50},
+        55: {11: 1900, 12: 1280, 15: 730, 20: 450, 25: 320, 30: 220, 35: 150},
+        60: {11: 2400, 12: 1510, 15: 860, 20: 580, 25: 440, 30: 340, 35: 270},
+        65: {11: 2200, 12: 1550, 15: 970, 20: 680, 25: 530, 30: 430, 35: 360},
+        70: {11: 2300, 12: 1640, 15: 1060, 20: 770, 25: 610, 30: 500, 35: 430},
+        75: {11: 2400, 12: 1700, 15: 1140, 20: 850, 25: 680, 30: 570, 35: 490}
+    }
+    
+    # 1. Trova temperatura più vicina disponibile
+    avail_temps = sorted(data_500.keys())
+    closest_t = min(avail_temps, key=lambda x: abs(x - t_store))
+    curve_data = data_500[closest_t]
+    
+    # 2. Interpola sulla portata
+    flows = np.array(sorted(curve_data.keys()))
+    v40s = np.array([curve_data[f] for f in flows])
+    
+    # Se fuori range, estrapola o clampa
+    if flow_lmin < flows[0]: return v40s[0]
+    if flow_lmin > flows[-1]: return v40s[-1]
+    
+    return np.interp(flow_lmin, flows, v40s)
+
 # ==========================================
-#  DATABASE PARAMETRI E HP
+#  DATABASE
 # ==========================================
 prices = { 6: 3300.0, 12: 5100.0, 20: 7400.0, 40: 13200.0 }
 NOMINAL_FLOWS = { 6: 10.0, 12: 20.0, 20: 25.0, 40: 50.0 }
@@ -169,6 +304,13 @@ params_v40 = {
     12: {'V0': 260.0,  'max_lmin': 32.0},
     20: {'V0': 525.0,  'max_lmin': 40.0},
     40: {'V0': 1050.0, 'max_lmin': 80.0}
+}
+
+PCM_SPECS_DB = {
+    6:  {'w': 337, 'd': 695, 'h': 1204},
+    12: {'w': 500, 'd': 695, 'h': 1500},
+    20: {'w': 790, 'd': 1200, 'h': 950},
+    40: {'w': 790, 'd': 1200, 'h': 1500},
 }
 
 CURVES_DB = {
@@ -195,97 +337,72 @@ CURVES_DB = {
 }
 
 HP_DATABASE = [
-    # --- CLIMER ECOFLEX ---
-    {"brand": "Climer", "model": "EcoFlex 150", "type": "Aria/Acqua", "kw": 1.8, "gas": "R290", "price": 2800},
-    {"brand": "Climer", "model": "EcoFlex 200", "type": "Aria/Acqua", "kw": 2.2, "gas": "R290", "price": 3100},
-    {"brand": "Climer", "model": "EcoFlex 300", "type": "Aria/Acqua", "kw": 3.0, "gas": "R290", "price": 3500},
-    {"brand": "Climer", "model": "EcoFlex Plus", "type": "Aria/Acqua", "kw": 4.5, "gas": "R290", "price": 4200},
+    {"brand": "Climer", "model": "EcoFlex 150", "type": "Aria/Acqua", "kw": 1.8, "gas": "R290", "max_t": 70, "price": 2800},
+    {"brand": "Climer", "model": "EcoFlex 200", "type": "Aria/Acqua", "kw": 2.2, "gas": "R290", "max_t": 70, "price": 3100},
+    {"brand": "Climer", "model": "EcoFlex 300", "type": "Aria/Acqua", "kw": 3.0, "gas": "R290", "max_t": 70, "price": 3500},
+    {"brand": "Climer", "model": "EcoFlex Plus", "type": "Aria/Acqua", "kw": 4.5, "gas": "R290", "max_t": 70, "price": 4200},
     {"brand": "Climer", "model": "EcoFlex EF02", "type": "Aria/Acqua", "kw": 2.2, "gas": "R134a/R513A", "price": 2600},
     {"brand": "Climer", "model": "EcoFlex EF04", "type": "Aria/Acqua", "kw": 3.8, "gas": "R134a/R513A", "price": 3100},
-
-    # --- ALTRE PICCOLE TAGLIE (< 4 kW) ---
-    {"brand": "Panasonic", "model": "Aquarea (J Gen)", "type": "Aria/Acqua", "kw": 3.2, "gas": "R32", "price": 3900},
-    {"brand": "Climer", "model": "EcoHeat", "type": "Aria/Acqua", "kw": 3.5, "gas": "R290", "price": 3500},
-    
-    # --- STANDARD (4 - 200kW) ---
-    {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 8.0, "gas": "R290", "price": 5200},
-    {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290", "price": 6800},
-    {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 4.0, "gas": "R32", "price": 4200},
-    {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32", "price": 4500},
-    {"brand": "Daikin", "model": "Altherma 3 H HT", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32", "price": 9800},
-    {"brand": "Mitsubishi", "model": "Ecodan Split", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32", "price": 4200},
-    {"brand": "Mitsubishi", "model": "Zubadan", "type": "Aria/Acqua", "kw": 12.0, "gas": "R32", "price": 6800},
-    {"brand": "Vaillant", "model": "aroTHERM plus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290", "price": 7500},
-    {"brand": "Wolf", "model": "CHA-10", "type": "Aria/Acqua", "kw": 10.0, "gas": "R290", "price": 8200},
-    {"brand": "Viessmann", "model": "Vitocal 250-A", "type": "Aria/Acqua", "kw": 10.0, "gas": "R290", "price": 7900},
-    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 9.0, "gas": "R32", "price": 5400},
-    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32", "price": 8500},
-    {"brand": "Samsung", "model": "EHS TDM Plus", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32", "price": 6200},
-    {"brand": "LG", "model": "Therma V Split", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32", "price": 6500},
-    {"brand": "Stiebel Eltron", "model": "WPL 25", "type": "Aria/Acqua", "kw": 14.0, "gas": "R410A", "price": 9500},
-    {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 18.0, "gas": "R410A", "price": 9500},
-    {"brand": "Climer", "model": "CA Series", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 13000},
-    {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32", "price": 11000},
-    {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 50.0, "gas": "R32", "price": 18500},
-    {"brand": "Mitsubishi", "model": "CAHV-R", "type": "Aria/Acqua", "kw": 40.0, "gas": "R454B", "price": 16000},
-    {"brand": "Aermec", "model": "NRK", "type": "Aria/Acqua", "kw": 35.0, "gas": "R410A", "price": 14500},
-    {"brand": "Aermec", "model": "NRK", "type": "Aria/Acqua", "kw": 55.0, "gas": "R410A", "price": 21000},
-    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 45.0, "gas": "R32", "price": 17000},
-    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32", "price": 24000},
-    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 40.0, "gas": "R32", "price": 15500},
-    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32", "price": 25000},
-    {"brand": "Rhoss", "model": "WinPACK", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "price": 12000},
-    {"brand": "Climer", "model": "H Series", "type": "Aria/Acqua", "kw": 90.0, "gas": "R410A", "price": 28000},
-    {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 85.0, "gas": "R32", "price": 29000},
-    {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 110.0, "gas": "R32", "price": 36000},
-    {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 45000},
-    {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 58000},
-    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 100.0, "gas": "R32", "price": 34000},
-    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 46000},
-    {"brand": "Carrier", "model": "AquaSnap 30RBP", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 59000},
-    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 120.0, "gas": "R32", "price": 38000},
-    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 180.0, "gas": "R32", "price": 52000},
-    {"brand": "Aermec", "model": "NRB", "type": "Aria/Acqua", "kw": 100.0, "gas": "R410A", "price": 31000},
-    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "price": 47000},
-    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "price": 59000},
-    {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 110.0, "gas": "R454B"},
-    {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 160.0, "gas": "R454B"},
-    {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 210.0, "gas": "R454B"},
-    {"brand": "Daikin", "model": "Altherma 3 GEO", "type": "Acqua/Acqua", "kw": 10.0, "gas": "R32", "price": 9500},
-    {"brand": "Nibe", "model": "S1155", "type": "Acqua/Acqua", "kw": 12.0, "gas": "R407C", "price": 11000},
-    {"brand": "Viessmann", "model": "Vitocal 300-G", "type": "Acqua/Acqua", "kw": 17.0, "gas": "R410A", "price": 13000},
-    {"brand": "Daikin", "model": "EWWD", "type": "Acqua/Acqua", "kw": 50.0, "gas": "R410A", "price": 22000},
-    {"brand": "Daikin", "model": "EWWD", "type": "Acqua/Acqua", "kw": 90.0, "gas": "R410A", "price": 32000},
-    {"brand": "Daikin", "model": "EWWD", "type": "Acqua/Acqua", "kw": 150.0, "gas": "R134a"},
-    {"brand": "Daikin", "model": "EWWD", "type": "Acqua/Acqua", "kw": 190.0, "gas": "R134a"},
-    {"brand": "Aermec", "model": "WRL", "type": "Acqua/Acqua", "kw": 80.0, "gas": "R410A", "price": 28000},
-    {"brand": "Aermec", "model": "WRL", "type": "Acqua/Acqua", "kw": 150.0, "gas": "R410A"},
-    {"brand": "Clivet", "model": "WSH-XEE", "type": "Acqua/Acqua", "kw": 100.0, "gas": "R410A", "price": 35000},
+    {"brand": "Panasonic", "model": "Aquarea (J Gen)", "type": "Aria/Acqua", "kw": 3.2, "gas": "R32", "max_t": 60, "price": 3900},
+    {"brand": "Climer", "model": "EcoHeat", "type": "Aria/Acqua", "kw": 3.5, "gas": "R290", "max_t": 70, "price": 3500},
+    {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 8.0, "gas": "R290", "max_t": 70, "price": 5200},
+    {"brand": "Climer", "model": "EcoPlus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290", "max_t": 70, "price": 6800},
+    {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 4.0, "gas": "R32", "max_t": 60, "price": 4200},
+    {"brand": "Daikin", "model": "Altherma 3 R", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32", "max_t": 60, "price": 4500},
+    {"brand": "Mitsubishi", "model": "Ecodan Split", "type": "Aria/Acqua", "kw": 8.0, "gas": "R32", "max_t": 60, "price": 4200},
+    {"brand": "Panasonic", "model": "Aquarea T-Cap", "type": "Aria/Acqua", "kw": 9.0, "gas": "R32", "max_t": 60, "price": 5400},
+    {"brand": "Vaillant", "model": "aroTHERM plus", "type": "Aria/Acqua", "kw": 12.0, "gas": "R290", "max_t": 75, "price": 7500},
+    {"brand": "Samsung", "model": "EHS TDM Plus", "type": "Aria/Acqua", "kw": 14.0, "gas": "R32", "max_t": 60, "price": 6200},
+    {"brand": "LG", "model": "Therma V Split", "type": "Aria/Acqua", "kw": 16.0, "gas": "R32", "max_t": 65, "price": 6500},
+    {"brand": "Climer", "model": "CA-20", "type": "Aria/Acqua", "kw": 20.0, "gas": "R410A", "max_t": 55, "price": 9500},
+    {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 25.0, "gas": "R32", "max_t": 60, "price": 11000},
+    {"brand": "Climer", "model": "CA-30", "type": "Aria/Acqua", "kw": 30.0, "gas": "R410A", "max_t": 55, "price": 13000},
+    {"brand": "Aermec", "model": "NRK", "type": "Aria/Acqua", "kw": 35.0, "gas": "R410A", "max_t": 65, "price": 14500},
+    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 40.0, "gas": "R32", "max_t": 60, "price": 15500},
+    {"brand": "Mitsubishi", "model": "CAHV-R", "type": "Aria/Acqua", "kw": 45.0, "gas": "R454B", "max_t": 70, "price": 17000},
+    {"brand": "Mitsubishi", "model": "QAHV", "type": "Aria/Acqua (CO2)", "kw": 40.0, "gas": "R744", "max_t": 90, "price": 22000},
+    {"brand": "Clivet", "model": "Thunder", "type": "Aria/Acqua", "kw": 40.0, "gas": "R290", "max_t": 75, "price": 18000},
+    {"brand": "Daikin", "model": "EWYT-B", "type": "Aria/Acqua", "kw": 50.0, "gas": "R32", "max_t": 60, "price": 18500},
+    {"brand": "Clivet", "model": "ELFOEnergy Sheen", "type": "Aria/Acqua", "kw": 60.0, "gas": "R32", "max_t": 60, "price": 22000},
+    {"brand": "Carrier", "model": "AquaSnap 30RB", "type": "Aria/Acqua", "kw": 70.0, "gas": "R32", "max_t": 60, "price": 25000},
+    {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 85.0, "gas": "R32", "max_t": 55, "price": 29000},
+    {"brand": "Climer", "model": "H-Series", "type": "Aria/Acqua", "kw": 90.0, "gas": "R410A", "max_t": 55, "price": 31000},
+    {"brand": "Aermec", "model": "NRB", "type": "Aria/Acqua", "kw": 100.0, "gas": "R410A", "max_t": 55, "price": 34000},
+    {"brand": "Mitsubishi", "model": "NX2-G02", "type": "Aria/Acqua", "kw": 110.0, "gas": "R454B", "max_t": 60, "price": 38000},
+    {"brand": "Clivet", "model": "SpinChiller4", "type": "Aria/Acqua", "kw": 120.0, "gas": "R32", "max_t": 55, "price": 42000},
+    {"brand": "Daikin", "model": "EWAT-B", "type": "Aria/Acqua", "kw": 150.0, "gas": "R32", "max_t": 55, "price": 48000},
+    {"brand": "Aermec", "model": "NRK (Big)", "type": "Aria/Acqua", "kw": 150.0, "gas": "R410A", "max_t": 65, "price": 55000},
+    {"brand": "Aermec", "model": "NRG", "type": "Aria/Acqua", "kw": 200.0, "gas": "R32", "max_t": 55, "price": 62000},
+    {"brand": "Swegon", "model": "BlueBox Zeta Rev", "type": "Aria/Acqua", "kw": 150.0, "gas": "R290", "max_t": 70, "price": 65000},
 ]
 
-# ==========================================
-#  DEFINIZIONE FUNZIONE DI RICERCA (ORA CHE IL DB ESISTE)
-# ==========================================
-def get_suggested_hp(target_kw):
-    if target_kw <= 0: return [], []
-    air_water = []
-    water_water = []
-    # Logica di ricerca flessibile
-    search_min = target_kw if target_kw > 3.0 else 0.0
-    limit_upper = max(target_kw + 10.0, 8.0)
-    
-    for hp in HP_DATABASE:
-        if search_min <= hp['kw'] < limit_upper:
-             if hp['type'] == "Aria/Acqua":
-                 air_water.append(hp)
-             else:
-                 water_water.append(hp)
-    
-    air_water.sort(key=lambda x: x['kw'])
-    water_water.sort(key=lambda x: x['kw'])
-    return air_water, water_water
+BUFFER_TANK_DB_GENERIC = [
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 300, "h": 1600, "d": 650, "price": 900},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 500, "h": 1700, "d": 750, "price": 1200},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 800, "h": 1800, "d": 900, "price": 1600},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 1000, "h": 2100, "d": 950, "price": 1900},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 1500, "h": 2200, "d": 1100, "price": 2500},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 2000, "h": 2436, "d": 1300, "price": 2800},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 2500, "h": 2500, "d": 1350, "price": 3200},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 3000, "h": 2900, "d": 1350, "price": 3800},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 4000, "h": 2900, "d": 1500, "price": 4800},
+    {"brand": "Cordivari", "model": "Volano Termico", "vol": 5000, "h": 2950, "d": 1700, "price": 5800},
+]
 
-# --- SIDEBAR UI ---
+DAIKIN_SANICUBE_DB = [
+    {"brand": "Daikin", "model": "Sanicube EKHWP300B", "vol": 294, "h": 1646, "d": 615, "price": 1800},
+    {"brand": "Daikin", "model": "Sanicube EKHWP500B", "vol": 477, "h": 1658, "d": 790, "price": 2400}, 
+]
+
+# --- SELETTORE CONFRONTO (Sidebar) ---
+st.sidebar.markdown("---")
+comp_target = st.sidebar.radio("Scegli Tecnologia di Confronto", ["Volano Termico Generico", "Daikin Sanicube (Drain-Back)"])
+is_sanicube = comp_target == "Daikin Sanicube (Drain-Back)"
+
+if is_sanicube:
+    t_sanicube_set = st.sidebar.select_slider("Temp. Accumulo Sanicube (°C)", options=[50, 55, 60, 65, 70, 75], value=60)
+
+# --- SEZIONE INPUT UTENTE (Sidebar) ---
 st.sidebar.header("Parametri Progetto")
 t_in = st.sidebar.number_input("Temp. Acqua Rete (°C)", value=12.5, step=0.5, format="%.1f")
 dt_target = 40.0 - t_in
@@ -351,7 +468,7 @@ with st.sidebar.expander("🔋 3. Batterie", expanded=True):
             st.error("Nessuna combinazione trovata.")
 
 # --- CALCOLI PRINCIPALI ---
-# (Spostati QUI, prima della sezione di simulazione che li usa)
+# Ora che t_pcm è stato definito nella sidebar, possiamo usarlo
 config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
           (st.session_state.qty_20, 20), (st.session_state.qty_40, 40)]
 total_cost = sum(q*prices[s] for q,s in config)
@@ -378,15 +495,41 @@ else:
     total_v40_liters = 99999
     autonomy_str = "∞ (Illimitata)"
 
+if is_sanicube:
+    t_water_set = t_sanicube_set
+else:
+    t_water_set = 60.0 if t_pcm < 60 else t_pcm 
+
+db_to_use = DAIKIN_SANICUBE_DB if is_sanicube else BUFFER_TANK_DB_GENERIC
+suggested_tank, tank_qty, tank_total_vol, tank_total_price = calculate_water_tank_config(total_v40_liters, t_water_set, t_in, db_to_use)
+
+cost_tooltip = "DETTAGLIO COSTI:\n"
+if total_cost > 0:
+    for qty, size in config:
+        if qty > 0:
+            sub = qty * prices[size]
+            cost_tooltip += f"- {qty}x i-{size}: € {sub:,.0f}\n"
+    cost_tooltip += f"\nTOTALE: € {total_cost:,.0f}"
+else:
+    cost_tooltip = "Nessuna batteria selezionata"
+
 # --- SIMULAZIONE 24H INPUTS ---
 with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
     sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
     sim_type = st.selectbox("Tipo Edificio", ["Residenziale", "Ufficio", "Hotel"])
     
     st.markdown("---")
-    st.markdown("**Strategia di Reintegro**")
-    recharge_strategy = st.selectbox("Modalità", ["Smart Hysteresis (Standard)", "Autoconsumo Fotovoltaico"])
+    is_pv_mode = st.toggle("☀️ Attiva Autoconsumo Fotovoltaico", value=False)
     
+    if is_pv_mode:
+        recharge_strategy = "Autoconsumo Fotovoltaico"
+        st.session_state.pv_start_sun = 50 
+        st.session_state.pv_start_night = 15
+        st.session_state.pv_stop = 100
+        st.info("ℹ️ Modalità **Salvaguardia PdC** attivata automaticamente.")
+    else:
+        recharge_strategy = "Smart Hysteresis (Standard)"
+
     st.markdown("📍 **Localizzazione Impianto**")
     address_input = st.text_input("Indirizzo (es. Via Roma 1, Milano)", value="")
     if st.button("Cerca Indirizzo"):
@@ -407,61 +550,32 @@ with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
     pv_coverage = 0
     val_start_std = 70
     
-    if recharge_strategy == "Autoconsumo Fotovoltaico":
+    if is_pv_mode:
         pv_coverage = st.number_input("Copertura PV della PdC (%)", 0, 100, 50, step=10)
-        
-        # NUOVO SELETTORE PRIORITA'
-        pv_priority = st.radio("Priorità Strategia PV", ["🛡️ Massimo Comfort (Batteria sempre carica)", "⚙️ Salvaguardia PdC (Minimizza ON/OFF)"])
-        
-        if st.button("✨ Ottimizza Strategia"):
-            if pv_priority == "🛡️ Massimo Comfort (Batteria sempre carica)":
-                st.session_state.pv_start_sun = 98
-                st.session_state.pv_start_night = 30
-                st.session_state.pv_stop = 100
-            else:
-                # Strategia Long Cycle: Scarica profonda prima di partire
-                st.session_state.pv_start_sun = 50 
-                st.session_state.pv_start_night = 15
-                st.session_state.pv_stop = 100
-            st.rerun()
-            
-        st.markdown("**Soglie Intervento (%)**")
-        start_soc_sun = st.slider("Avvio con Sole se carica < (%)", 0, 100, key='pv_start_sun')
-        start_soc_night = st.slider("Avvio Notturno se carica < (%)", 0, 100, key='pv_start_night')
-        stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, key='pv_stop')
+        st.markdown("**Soglie Intervento (Automatiche)**")
+        st.text(f"Avvio con Sole: < {st.session_state.pv_start_sun}%")
+        st.text(f"Avvio Notturno: < {st.session_state.pv_start_night}%")
     else:
         st.markdown("**Soglie Intervento (%)**")
-        
         if st.button("✨ Ottimizza Soglie (Min. Energia)"):
             best_kwh = float('inf')
             best_start = 70
             best_stop = 98
-            
-            # Parametri temporanei per simulazione
-            # Usa i valori calcolati globalmente
             tank_cap_opt = total_energy_e0 / (4.186 * dt_target) * 3600.0 if dt_target > 0 else 999
-            if net_power_deficit > 0.1:
-                tank_cap_opt = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
-            
+            if net_power_deficit > 0.1: tank_cap_opt = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
             hp_flow_opt = (p_hp_tot_input * 60) / (4.186 * dt_target) if dt_target > 0 else 0
-            
-            # Get profile
             _, hourly_flow_opt, _ = get_daily_profile_curve(sim_people, sim_type)
-            x_h = np.linspace(0, 1440, 25)
-            y_f = hourly_flow_opt + [hourly_flow_opt[0]]
-            f_int = interpolate.interp1d(x_h, y_f, kind='linear')
+            flow_list_opt = list(hourly_flow_opt)
+            y_f_opt = flow_list_opt + [flow_list_opt[0]]
+            x_h_opt = np.linspace(0, 1440, len(y_f_opt))
+            f_int = interpolate.interp1d(x_h_opt, y_f_opt, kind='linear')
             cons_curve_opt = f_int(np.arange(1440))
-            
-            # Grid Search
             for start_test in range(10, 90, 10):
                 for stop_test in range(start_test + 10, 101, 10):
-                    # Simulation Logic (Simplified for optimization)
-                    # Warmup
                     curr_v = tank_cap_opt * 0.5
                     is_on = False
                     for _ in range(1440): # Warmup
-                        st_th = tank_cap_opt * (start_test/100.0)
-                        sp_th = tank_cap_opt * (stop_test/100.0)
+                        st_th = tank_cap_opt * (start_test/100.0); sp_th = tank_cap_opt * (stop_test/100.0)
                         cons = cons_curve_opt[_]
                         if not is_on: 
                             if curr_v < st_th: is_on = True
@@ -471,13 +585,10 @@ with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
                         curr_v = curr_v - cons + prod
                         if curr_v > tank_cap_opt: curr_v = tank_cap_opt
                         if curr_v < 0: curr_v = 0
-                    
-                    # Real Run
                     kwh_run = 0
                     min_soc = tank_cap_opt
                     for i in range(1440):
-                        st_th = tank_cap_opt * (start_test/100.0)
-                        sp_th = tank_cap_opt * (stop_test/100.0)
+                        st_th = tank_cap_opt * (start_test/100.0); sp_th = tank_cap_opt * (stop_test/100.0)
                         cons = cons_curve_opt[i]
                         if not is_on: 
                             if curr_v < st_th: is_on = True
@@ -489,14 +600,9 @@ with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
                         if curr_v > tank_cap_opt: curr_v = tank_cap_opt
                         if curr_v < 0: curr_v = 0
                         if curr_v < min_soc: min_soc = curr_v
-                    
-                    # Evaluate
-                    if min_soc > 0: # Valid strategy (no cold water)
+                    if min_soc > 0: 
                         if kwh_run < best_kwh:
-                            best_kwh = kwh_run
-                            best_start = start_test
-                            best_stop = stop_test
-            
+                            best_kwh = kwh_run; best_start = start_test; best_stop = stop_test
             st.session_state.std_start = best_start
             st.session_state.std_stop = best_stop
             st.rerun()
@@ -504,64 +610,139 @@ with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
         start_soc_std = st.slider("Avvio Reintegro se carica < (%)", 0, 100, key='std_start')
         stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, key='std_stop')
 
-cost_tooltip = "DETTAGLIO COSTI:\n"
-if total_cost > 0:
-    for qty, size in config:
-        if qty > 0:
-            sub = qty * prices[size]
-            cost_tooltip += f"- {qty}x i-{size}: € {sub:,.0f}\n"
-    cost_tooltip += f"\nTOTALE: € {total_cost:,.0f}"
-else:
-    cost_tooltip = "Nessuna batteria selezionata"
+# ==========================================
+#  VISUALIZZAZIONE DASHBOARD
+# ==========================================
 
-sugg_air, sugg_water = get_suggested_hp(p_hp_tot_input)
-all_sugg = sugg_air + sugg_water
-hp_cost_disp = "N/A"
-hp_tooltip = "Nessuna pompa di calore trovata nel range specificato."
-if all_sugg:
-    best_hp = min(all_sugg, key=lambda x: x.get('price', float('inf')))
-    hp_cost_disp = f"€ {best_hp['price']:,.0f}"
-    hp_tooltip = f"MIGLIOR PREZZO:\n{best_hp['brand']} {best_hp['model']}\nPotenza: {best_hp['kw']} kW\nGas: {best_hp['gas']}"
-
-# --- VISUALIZZAZIONE CRUSCOTTO ---
 st.subheader("📊 Analisi Prestazioni")
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3 = st.columns(3)
 c1.metric("Portata Target", f"{qp_lmin_target:.1f} L/min")
 c2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota coperta dalla batteria")
 c3.metric("Autonomia", autonomy_str, help="Durata alla portata di picco")
-c4.metric("Costo Batterie", f"€ {total_cost:,.0f}", help=cost_tooltip)
-c4.caption("⚠️ Contattare fornitore per conferma")
 
-c1b, c2b, c3b, c4b = st.columns(4)
+c1b, c2b, c3b = st.columns(3)
 c1b.metric(f"Salto Termico", f"{dt_target:.1f} °C")
 c2b.metric("Potenza PdC Calc.", f"{p_hp_tot_input:.1f} kW", help=f"Necessaria per ricarica in {recharge_min} min")
 val_v40_disp = f"{total_v40_liters:.0f} L" if total_v40_liters < 99999 else "∞"
 c3b.metric("Volume V40 Totale", val_v40_disp)
-c4b.metric("Costo PdC (Min)", hp_cost_disp, help=hp_tooltip)
-c4b.caption("⚠️ Contattare fornitore per conferma")
 
-if p_hp_tot_input > 0 or p_hp_tot_input == 0: 
-    st.markdown("### 🔍 Suggerimento Pompe di Calore (Multi-Brand)")
-    sc1, sc2 = st.columns(2)
-    with sc1:
-        st.markdown("**🌬️ Aria / Acqua**")
-        if sugg_air:
-            for hp in sugg_air:
-                price_disp = f"€ {hp['price']:,.0f}" if 'price' in hp else "N/A"
-                st.info(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}] | Est.: {price_disp}")
-        else: st.warning("Nessun modello trovato in questo range.")
-    with sc2:
-        st.markdown("**💧 Acqua / Acqua (Geotermiche / Loop)**")
-        if sugg_water:
-            for hp in sugg_water:
-                price_disp = f"€ {hp['price']:,.0f}" if 'price' in hp else "N/A"
-                st.success(f"**{hp['brand']} {hp['model']}** - {hp['kw']} kW [Gas: {hp['gas']}] | Est.: {price_disp}")
-        else: st.warning("Nessun modello trovato in questo range.")
+st.divider()
+
+# --- CONFRONTO VOLANO TERMICO ---
+if suggested_tank:
+    st.subheader(f"🆚 Confronto Tecnologico: i-TES vs {comp_target}")
+    
+    ites_dims_str = ""
+    batt_detail_str = ""
+    for qty, size in config:
+        if qty > 0 and size in PCM_SPECS_DB:
+            spec = PCM_SPECS_DB[size]
+            ites_dims_str += f"- {qty}x [L {spec['w']} x P {spec['d']} x H {spec['h']} mm]\n"
+            batt_detail_str += f"- {qty}x i-{size}: € {qty * prices[size]:,.0f}\n"
+
+    valid_hps_ites = get_suggested_hp(p_hp_tot_input, t_pcm)
+    hp_ites_sel = valid_hps_ites[0] if valid_hps_ites else None
+    
+    valid_hps_water = get_suggested_hp(p_hp_tot_input, t_water_set + 5)
+    hp_water_sel = valid_hps_water[0] if valid_hps_water else None
+
+    hp_ites_price = hp_ites_sel['price'] if hp_ites_sel else 0
+    total_system_ites_cost = total_cost + hp_ites_price
+
+    hp_water_price = hp_water_sel['price'] if hp_water_sel else 0
+    total_system_water_cost = tank_total_price + hp_water_price
+
+    col_comp1, col_comp2 = st.columns(2)
+    
+    with col_comp1:
+        st.info(f"### 🔋 Soluzione i-TES (PCM)\n"
+                f"**Temp. Stoccaggio:** {t_pcm}°C\n\n"
+                f"**Ingombro Moduli:**\n{ites_dims_str}\n"
+                f"**Dettaglio Costo Batterie:**\n{batt_detail_str}\n"
+                f"**Costo Batterie Totale:** € {total_cost:,.0f}\n\n"
+                f"---\n"
+                f"**Pompa di Calore Suggerita:**\n"
+                f"{hp_ites_sel['brand'] if hp_ites_sel else 'N/A'} {hp_ites_sel['model'] if hp_ites_sel else ''}\n"
+                f"- Potenza: {hp_ites_sel['kw'] if hp_ites_sel else '-'} kW\n"
+                f"- Gas: {hp_ites_sel['gas'] if hp_ites_sel else '-'}\n"
+                f"- Max T: {hp_ites_sel.get('max_t','-') if hp_ites_sel else '-'}°C\n"
+                f"- Costo Est.: € {hp_ites_price:,.0f}\n"
+                f"---\n"
+                f"### 💰 TOTALE SISTEMA: € {total_system_ites_cost:,.0f}")
+        st.caption("⚠️ Contattare fornitore per conferma")
+                
+    with col_comp2:
+        tech_icon = "🛢️" if not is_sanicube else "🧴"
+        tech_name = "Volano Termico Equivalente" if not is_sanicube else "Daikin Sanicube Equivalente"
+        
+        st.success(f"### {tech_icon} {tech_name}\n"
+                   f"**Temp. Stoccaggio:** {t_water_set}°C (Anti-Legionella)\n\n"
+                   f"**Modello Suggerito:** {suggested_tank['brand']} {suggested_tank['model']}\n\n"
+                   f"**Quantità:** {tank_qty}x ({tank_total_vol} Litri totali)\n\n"
+                   f"**Dimensioni Unit:** Ø {suggested_tank['d']} mm x H {suggested_tank['h']} mm\n\n"
+                   f"**Costo Volano:** € {tank_total_price:,.0f}\n\n"
+                   f"---\n"
+                   f"**Pompa di Calore Suggerita (T_max > {t_water_set}°C):**\n"
+                   f"{hp_water_sel['brand'] if hp_water_sel else 'N/A'} {hp_water_sel['model'] if hp_water_sel else ''}\n"
+                   f"- Potenza: {hp_water_sel['kw'] if hp_water_sel else '-'} kW\n"
+                   f"- Gas: {hp_water_sel['gas'] if hp_water_sel else '-'}\n"
+                   f"- Max T: {hp_water_sel.get('max_t','-') if hp_water_sel else '-'}°C\n"
+                   f"- Costo Est.: € {hp_water_price:,.0f}\n"
+                   f"---\n"
+                   f"### 💰 TOTALE SISTEMA: € {total_system_water_cost:,.0f}")
+        st.caption("⚠️ Contattare fornitore per conferma")
+        
+        with st.expander("ℹ️ Nota Tecnica: Perché una PdC ad Alta Temperatura?"):
+            st.markdown(f"""
+            Per mantenere il volano a **{t_water_set}°C**, è necessario un generatore capace di raggiungere questa temperatura con un margine operativo adeguato (es. +5°C), per evitare di far lavorare il compressore sempre al limite.
+            """)
+        
+        if is_sanicube:
+             with st.expander("ℹ️ Info Daikin Sanicube"):
+                 st.markdown("""
+                 Il sistema **Daikin Sanicube** utilizza un accumulo di acqua tecnica (non potabile) con produzione istantanea di ACS.
+                 * **Igiene:** Grazie al principio semi-istantaneo, non vi è ristagno di acqua potabile, riducendo drasticamente il rischio Legionella.
+                 * **Materiali:** Costruito in materiale plastico, è esente da corrosione.
+                 * **Drain-Back:** Può essere integrato con sistemi solari a svuotamento.
+                 """)
+
+    delta_capex_hp = 0
+    if hp_ites_sel and hp_water_sel:
+        delta_capex_hp = hp_water_sel['price'] - hp_ites_sel['price']
+
+    st.caption(f"*Nota: Il volano termico deve contenere {tank_total_vol:.0f} litri d'acqua a {t_water_set}°C per eguagliare il V40 delle batterie i-TES.*")
 
 st.divider()
 
 # --- GRAFICI INTERATTIVI ---
 sys_flows, sys_powers, sys_temps, sys_v40_volumes = get_system_curves(config, t_pcm, dt_target, p_hp_tot_input, total_energy_e0)
+
+# FUNZIONE PER LE CURVE REALI SANICUBE (V40)
+def get_sanicube_v40_at_flow(flow_lmin, t_store):
+    # Dati grezzi estratti dal documento fornito (HYC 544/32/0 simile a 500L)
+    data_500 = {
+        50: {11: 1550, 12: 990, 15: 530, 20: 290, 25: 180, 30: 100, 35: 50},
+        55: {11: 1900, 12: 1280, 15: 730, 20: 450, 25: 320, 30: 220, 35: 150},
+        60: {11: 2400, 12: 1510, 15: 860, 20: 580, 25: 440, 30: 340, 35: 270},
+        65: {11: 2200, 12: 1550, 15: 970, 20: 680, 25: 530, 30: 430, 35: 360},
+        70: {11: 2300, 12: 1640, 15: 1060, 20: 770, 25: 610, 30: 500, 35: 430},
+        75: {11: 2400, 12: 1700, 15: 1140, 20: 850, 25: 680, 30: 570, 35: 490}
+    }
+    
+    # 1. Trova temperatura più vicina disponibile
+    avail_temps = sorted(data_500.keys())
+    closest_t = min(avail_temps, key=lambda x: abs(x - t_store))
+    curve_data = data_500[closest_t]
+    
+    # 2. Interpola sulla portata
+    flows = np.array(sorted(curve_data.keys()))
+    v40s = np.array([curve_data[f] for f in flows])
+    
+    # Se fuori range, estrapola o clampa
+    if flow_lmin < flows[0]: return v40s[0]
+    if flow_lmin > flows[-1]: return v40s[-1]
+    
+    return np.interp(flow_lmin, flows, v40s)
 
 if len(sys_flows) > 0:
     col_g1, col_g2, col_g3 = st.columns(3)
@@ -587,7 +768,20 @@ if len(sys_flows) > 0:
         fig3 = go.Figure()
         display_max_y = 10000 
         plot_v40_vol = [min(v, display_max_y) for v in sys_v40_volumes]
-        fig3.add_trace(go.Scatter(x=sys_flows, y=plot_v40_vol, mode='lines', line=dict(color='#457b9d', width=2), name='Volume Disponibile', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
+        fig3.add_trace(go.Scatter(x=sys_flows, y=plot_v40_vol, mode='lines', line=dict(color='#457b9d', width=2), name='i-TES V40', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
+        
+        # AGGIUNTA CURVA SANICUBE SE SELEZIONATO
+        if is_sanicube:
+            sanicube_v40_curve = []
+            # Calculate total volume for multiple tanks
+            # Assuming linear scaling with quantity which is a simplification but valid for parallel connection
+            for f in sys_flows:
+                 # Single tank V40
+                 single_v40 = get_sanicube_v40_at_flow(f / tank_qty, t_water_set) # Flow split per tank
+                 sanicube_v40_curve.append(single_v40 * tank_qty)
+            
+            fig3.add_trace(go.Scatter(x=sys_flows, y=sanicube_v40_curve, mode='lines', line=dict(color='#e67e22', width=2, dash='dash'), name='Sanicube V40 (Reale)', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
+
         pt_v40_vis = min(total_v40_liters, display_max_y)
         label_v40 = f"{total_v40_liters:.0f} L" if total_v40_liters < 9000 else "> 9000 L"
         fig3.add_trace(go.Scatter(x=[qp_lmin_target], y=[pt_v40_vis], mode='markers', marker=dict(color='purple', size=14, line=dict(color='black', width=2)), name='Punto Lavoro', hovertemplate=f'<b>Punto Lavoro</b><br>Portata: %{{x:.1f}} L/min<br>Volume: {label_v40}<extra></extra>'))
@@ -599,35 +793,27 @@ else:
 st.divider()
 
 # --- GRAFICO SIMULAZIONE 24H (CON SOC E SMART REINTEGRO PV) ---
-with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", expanded=True):
+with st.expander("📈 1. Analisi Dettagliata (i-TES)", expanded=True):
     hours_day, hourly_flow_lmin, total_daily_L = get_daily_profile_curve(sim_people, sim_type)
     
-    # PVGIS Data Retrieval (per scalare la curva)
-    # Prendiamo il mese corrente (1-12 -> 0-11 index)
     curr_month_idx = datetime.now().month - 1
     daily_kwh_kwp = get_pvgis_data(st.session_state.lat, st.session_state.lon, curr_month_idx)
     
-    # 1. Setup Simulazione
     sim_minutes = 1440 
     x_time = np.arange(sim_minutes)
     
-    # Interpolazione del consumo
     x_hours = np.linspace(0, 1440, 25) 
-    y_flow = hourly_flow_lmin + [hourly_flow_lmin[0]]
-    f_interp = interpolate.interp1d(x_hours, y_flow, kind='linear')
+    flow_list_sim = list(hourly_flow_lmin)
+    y_f_sim = flow_list_sim + [flow_list_sim[0]]
+    x_h_sim = np.linspace(0, 1440, len(y_f_sim))
+    f_interp = interpolate.interp1d(x_h_sim, y_f_sim, kind='linear')
     consumption_curve_min = f_interp(x_time)
     
-    # 2. Parametri
     tank_capacity_L = total_v40_liters if total_v40_liters < 99999 else 9999 
     hp_recharge_flow_lmin = (p_hp_tot_input * 60) / (4.186 * dt_target) if dt_target > 0 else 0
     
-    # Curva Solare (Site Specific)
     solar_profile_norm = create_solar_curve_site_specific(st.session_state.lat, st.session_state.lon, daily_kwh_kwp)
-    s_start, s_end = get_solar_window(st.session_state.get('solar_zone', 'C')) # Default C if not set
-    start_min_solar = s_start * 60
-    end_min_solar = s_end * 60
     
-    # 3. Funzione di Simulazione (per Warm-up e Run Finale)
     def run_simulation_step(start_vol, start_hp_state):
         curr_v = start_vol
         is_hp_on = start_hp_state
@@ -641,14 +827,14 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         
         for i in range(sim_minutes):
             solar_intensity = solar_profile_norm[i]
-            is_sunny = solar_intensity > 0.05 # Threshold di "Sole"
+            is_sunny = solar_intensity > 0.05 
             
-            if recharge_strategy == "Autoconsumo Fotovoltaico":
-                st_thr = tank_capacity_L * (start_soc_sun/100.0) if is_sunny else tank_capacity_L * (start_soc_night/100.0)
-                sp_thr = tank_capacity_L * (stop_soc/100.0)
+            if is_pv_mode:
+                st_thr = tank_capacity_L * (st.session_state.pv_start_sun/100.0) if is_sunny else tank_capacity_L * (st.session_state.pv_start_night/100.0)
+                sp_thr = tank_capacity_L * (st.session_state.pv_stop/100.0)
             else:
-                st_thr = tank_capacity_L * (start_soc_std/100.0)
-                sp_thr = tank_capacity_L * (stop_soc/100.0)
+                st_thr = tank_capacity_L * (st.session_state.std_start/100.0)
+                sp_thr = tank_capacity_L * (st.session_state.std_stop/100.0)
             
             cons_L = consumption_curve_min[i]
             
@@ -662,15 +848,15 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
             prod_L = 0
             if is_hp_on:
                 prod_L = hp_recharge_flow_lmin
-                tot_kwh += kwh_per_m
-                if is_sunny and recharge_strategy == "Autoconsumo Fotovoltaico":
-                    # Calcola quota solare istantanea
-                    s_part = kwh_per_m * (pv_coverage / 100.0) * solar_intensity 
-                    if s_part > kwh_per_m: s_part = kwh_per_m
+                kwh_curr = (p_hp_tot_input / 60.0)
+                tot_kwh += kwh_curr
+                if is_pv_mode and is_sunny:
+                    s_part = kwh_curr * (pv_coverage / 100.0) * solar_intensity 
+                    if s_part > kwh_curr: s_part = kwh_curr
                     sol_kwh += s_part
-                    grd_kwh += (kwh_per_m - s_part)
+                    grd_kwh += (kwh_curr - s_part)
                 else:
-                    grd_kwh += kwh_per_m
+                    grd_kwh += kwh_curr
             
             curr_v = curr_v - cons_L + prod_L
             if curr_v > tank_capacity_L: curr_v = tank_capacity_L
@@ -681,24 +867,24 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
             
         return soc_hist, hp_status_hist, curr_v, is_hp_on, tot_kwh, sol_kwh, grd_kwh, cycle_count
 
-    # Warm-up Day
-    _, _, end_vol_0, end_state_0, _, _, _, _ = run_simulation_step(tank_capacity_L * 0.5, False)
+    start_vol_guess = tank_capacity_L * 0.5
+    start_state_guess = False
     
-    # Run Ufficiale
-    soc_history, hp_status_history, _, _, total_kwh_used, solar_kwh_used, grid_kwh_used, cycle_total = run_simulation_step(end_vol_0, end_state_0)
+    for _ in range(10):
+        soc_history, hp_status_history, end_vol, end_state, total_kwh_used, solar_kwh_used, grid_kwh_used, cycle_total = run_simulation_step(start_vol_guess, start_state_guess)
+        if abs(end_vol - start_vol_guess) < (tank_capacity_L * 0.01):
+            break
+        start_vol_guess = end_vol
+        start_state_guess = end_state
     
-    # Cumulative Consumption & Production (NEW LOGIC)
     cumulative_consumption = np.cumsum(consumption_curve_min)
     cumulative_production = np.cumsum(hp_status_history)
-    
-    # Average User Flow (L/min) over 24h
+    initial_soc_val = soc_history[0]
+    total_availability = np.array([initial_soc_val + cp for cp in cumulative_production])
+    y_fill_green = total_availability 
+    y_fill_red = cumulative_consumption 
     avg_user_flow_lmin = cumulative_consumption[-1] / 1440.0
     
-    # Calculate fills for cumulative graph
-    y_fill_green = np.where(cumulative_production > cumulative_consumption, cumulative_production, cumulative_consumption)
-    y_fill_red = np.where(cumulative_consumption > cumulative_production, cumulative_consumption, cumulative_production)
-
-    # 4. Grafico
     fig_smart = make_subplots(
         rows=2, cols=1, 
         shared_xaxes=True,
@@ -707,18 +893,15 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
     )
     
-    # --- ROW 1: MAIN SIMULATION (INSTANTANEOUS) ---
-    # Area Solar Curve
-    if recharge_strategy == "Autoconsumo Fotovoltaico":
+    if is_pv_mode:
         fig_smart.add_trace(go.Scatter(
-            x=x_time/60, y=solar_profile_norm * tank_capacity_L, # Scalato visivamente
+            x=x_time/60, y=solar_profile_norm * tank_capacity_L,
             mode='lines', fill='tozeroy', name='Produzione PV (Profilo)',
             line=dict(color='yellow', width=0),
             fillcolor='rgba(255, 215, 0, 0.4)',
             hoverinfo='skip'
         ), row=1, col=1, secondary_y=True)
     
-    # Consumo Istantaneo (Rosso)
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=consumption_curve_min,
         mode='lines', fill='tozeroy', name='Prelievo Istantaneo',
@@ -726,7 +909,6 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         fillcolor='rgba(255, 0, 0, 0.2)'
     ), row=1, col=1, secondary_y=False)
     
-    # Produzione PdC Istantanea
     fig_smart.add_trace(go.Scatter(
         x=x_time/60, y=hp_status_history,
         mode='lines', name='Reintegro PdC',
@@ -734,63 +916,30 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         fill='tozeroy', fillcolor='rgba(42, 157, 143, 0.2)'
     ), row=1, col=1, secondary_y=False)
     
-    # Target Flow Line (QP Target)
     fig_smart.add_trace(go.Scatter(
         x=[0, 24], y=[qp_lmin_target, qp_lmin_target],
         mode='lines', name='Target di Picco (EN 806)',
         line=dict(color='black', width=2, dash='dashdot')
     ), row=1, col=1, secondary_y=False)
     
-    # Average User Flow Line (NEW)
     fig_smart.add_trace(go.Scatter(
         x=[0, 24], y=[avg_user_flow_lmin, avg_user_flow_lmin],
         mode='lines', name='Portata Media Utenza',
         line=dict(color='darkred', width=2, dash='dot')
     ), row=1, col=1, secondary_y=False)
     
-    # Reference Lines (Max Capacity)
     max_sys_flow = 0
-    nom_sys_flow = 0
     for qty, size in config:
         if qty > 0:
             last_pt = CURVES_DB[size][t_pcm][-1] 
             max_sys_flow += (last_pt[0] * qty)
-            nom_sys_flow += (NOMINAL_FLOWS[size] * qty)
             
     fig_smart.add_trace(go.Scatter(x=[0, 24], y=[max_sys_flow, max_sys_flow], mode='lines', name='Capacità Max Batterie', line=dict(color='#2a9d8f', width=2, dash='dash')), row=1, col=1, secondary_y=False)
     
-    # --- ROW 2: CUMULATIVE & SOC ---
-    
-    # 1. SoC Battery (Moved Here)
-    fig_smart.add_trace(go.Scatter(
-        x=x_time/60, y=soc_history,
-        mode='lines', name='Carica Batteria (SoC)',
-        line=dict(color='#007acc', width=3)
-    ), row=2, col=1)
-    
-    # 2. Cumulative Consumption (Red Line)
-    fig_smart.add_trace(go.Scatter(
-        x=x_time/60, y=cumulative_consumption,
-        mode='lines', name='Cumulato Prelievo',
-        line=dict(color='#d62728', width=2)
-    ), row=2, col=1)
-    
-    # Green Fill (Surplus)
-    fig_smart.add_trace(go.Scatter(
-        x=x_time/60, y=y_fill_green,
-        mode='lines', line=dict(width=0),
-        fill='tonexty', fillcolor='rgba(44, 160, 44, 0.2)', # Green light
-        showlegend=False, hoverinfo='skip'
-    ), row=2, col=1)
-    
-    # Cumulative Production (Green Line) - Plotted AFTER fill so it's on top
-    fig_smart.add_trace(go.Scatter(
-        x=x_time/60, y=cumulative_production,
-        mode='lines', name='Cumulato Produzione',
-        line=dict(color='#2ca02c', width=2)
-    ), row=2, col=1)
-    
-    # Red Fill (Deficit)
+    fig_smart.add_trace(go.Scatter(x=x_time/60, y=soc_history, mode='lines', name='Carica Batteria (SoC)', line=dict(color='#007acc', width=3)), row=2, col=1)
+    fig_smart.add_trace(go.Scatter(x=x_time/60, y=cumulative_consumption, mode='lines', name='Cumulato Prelievo', line=dict(color='#d62728', width=2)), row=2, col=1)
+    fig_smart.add_trace(go.Scatter(x=x_time/60, y=y_fill_green, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(44, 160, 44, 0.2)', showlegend=False, hoverinfo='skip'), row=2, col=1)
+    fig_smart.add_trace(go.Scatter(x=x_time/60, y=cumulative_production, mode='lines', name='Cumulato Produzione', line=dict(color='#2ca02c', width=2)), row=2, col=1)
     fig_smart.add_trace(go.Scatter(x=x_time/60, y=y_fill_red, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(214, 39, 40, 0.2)', showlegend=False), row=2, col=1) 
 
     fig_smart.update_layout(
@@ -799,19 +948,17 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     
-    # Axis Titles
     fig_smart.update_xaxes(title_text="Ora del Giorno (0-24h)", row=2, col=1)
     fig_smart.update_yaxes(title_text="Portata (L/min)", row=1, col=1, secondary_y=False)
     fig_smart.update_yaxes(title_text="Volume (L)", row=1, col=1, secondary_y=True, range=[0, tank_capacity_L*1.1])
-    fig_smart.update_yaxes(title_text="Volume (L)", row=2, col=1)
+    fig_smart.update_yaxes(title_text="Volume Cumulato (L)", row=2, col=1)
     
     st.plotly_chart(fig_smart, use_container_width=True)
     st.caption(f"Nota: La portata media dell'utenza calcolata è di **{avg_user_flow_lmin:.1f} L/min** (Linea rossa tratteggiata), mentre il picco normativo è **{qp_lmin_target:.1f} L/min**.")
     
-    # KPI Energetici
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Energia Totale PdC", f"{total_kwh_used:.1f} kWh/giorno")
-    if recharge_strategy == "Autoconsumo Fotovoltaico":
+    if is_pv_mode:
         kpi2.metric("Da Fotovoltaico", f"{solar_kwh_used:.1f} kWh", delta=f"{(solar_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%")
         kpi3.metric("Da Rete", f"{grid_kwh_used:.1f} kWh", delta=f"-{(grid_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%", delta_color="inverse")
     else:
@@ -819,52 +966,167 @@ with st.expander("📈 Simulazione Profilo Giornaliero & Strategia Reintegro", e
         kpi3.metric("Autoconsumo", "N/A")
     kpi4.metric("Cicli ON/OFF", f"{cycle_total}", help="Numero di accensioni giornaliere della Pompa di Calore")
 
-# --- TABELLA MIX BATTERIE ---
-table_rows = ""
-for qty, size in config:
-    if qty > 0:
-        nom_flow = NOMINAL_FLOWS[size]
-        nom_power = (nom_flow * dt_target * 4.186) / 60.0
-        last_pt = CURVES_DB[size][t_pcm][-1]
-        f_max = last_pt[0] * qty
-        p_max = last_pt[1] * qty
-        u_price = prices[size]
-        t_price = u_price * qty
-        table_rows += f"""<tr style='border-bottom: 1px solid #eee;'>
-            <td style='padding: 10px; font-weight:bold;'>i-{size}</td>
-            <td style='padding: 10px; text-align:center;'>{qty}</td>
-            <td style='padding: 10px; text-align:right;'>{nom_flow:.1f} L/min</td>
-            <td style='padding: 10px; text-align:right;'>{nom_power:.1f} kW</td>
-            <td style='padding: 10px; text-align:right; color:#666;'>{f_max:.1f} L/min</td>
-            <td style='padding: 10px; text-align:right; color:#666;'>{p_max:.1f} kW</td>
-            <td style='padding: 10px; text-align:right;'>€ {u_price:,.0f}</td>
-            <td style='padding: 10px; text-align:right; font-weight:bold;'>€ {t_price:,.0f}</td>
-        </tr>"""
+# --- CONFRONTO TECNOLOGICO E TABELLE ---
+with st.expander(f"🆚 2. Confronto Tecnologico (i-TES vs {comp_target})", expanded=True):
+    # Use global function run_simulation_step_water
+    start_v_w = tank_total_vol * 0.8
+    start_s_w = False
+    
+    cost_extra_temp = 0 # Initialize here to be safe
 
-if total_cost > 0:
-    table_rows += f"""<tr style='background-color:#e9ecef; font-weight:bold; border-top: 2px solid #2a9d8f;'>
-        <td colspan="7" style='padding: 12px; text-align:right;'>TOTALE</td>
-        <td style='padding: 12px; text-align:right; color:#2a9d8f;'>€ {total_cost:,.0f}</td>
-    </tr>"""
+    # Convergence loop
+    for _ in range(5):
+        soc_water, temp_water, end_v_w, end_s_w, kwh_water_therm, cycles_water = run_simulation_step_water(
+            start_v_w, start_s_w, tank_total_vol, consumption_curve_min, 
+            hp_recharge_flow_lmin, (p_hp_tot_input / 60.0), t_water_set, t_in, is_sanicube
+        )
+        start_v_w = end_v_w
+        start_s_w = end_s_w
 
-if table_rows:
-    full_table_html = f"""<div style="background-color:#f8f9fa; padding:20px; border-radius:10px; border:1px solid #ddd; margin-bottom: 20px;">
-    <h3 style="margin-top:0; color:#333; border-bottom: 2px solid #2a9d8f; padding-bottom:10px;">🧩 Dettaglio Contributo Batterie</h3>
-    <table style="width:100%; text-align:left; border-collapse: collapse;">
-    <thead><tr style="background-color:#e9ecef; color:#444; font-size:14px;">
-    <th style="padding: 10px;">Modello</th><th style="padding: 10px; text-align:center;">Q.tà</th>
-    <th style="padding: 10px; text-align:right;">Portata Nom.</th><th style="padding: 10px; text-align:right;">Potenza Nom.</th>
-    <th style="padding: 10px; text-align:right;">Portata Max</th><th style="padding: 10px; text-align:right;">Potenza Max</th>
-    <th style="padding: 10px; text-align:right;">Prezzo Unit.</th><th style="padding: 10px; text-align:right;">Subtotale</th>
-    </tr></thead><tbody>{table_rows}</tbody></table></div>"""
-    st.markdown(full_table_html, unsafe_allow_html=True)
+    kwh_pcm = total_kwh_used
+    cycles_pcm = cycle_total
+    
+    s_temp_water = pd.Series(temp_water)
+    temp_water_ma = s_temp_water.rolling(window=60, min_periods=1).mean()
+    
+    if len(sys_flows) > 0:
+        func_temp_pcm = interpolate.interp1d(sys_flows, sys_temps, kind='linear', fill_value="extrapolate")
+    else:
+        func_temp_pcm = lambda x: t_in 
 
-# --- GRAFICO EN 806-3 ---
-with st.expander("📉 Vedi Grafico Normativo EN 806-3", expanded=True):
+    soc_pcm, temp_pcm = run_pcm_plot_data(soc_history, func_temp_pcm, t_pcm, t_in, consumption_curve_min)
+
+    fig_comp = make_subplots(
+        rows=2, cols=1, 
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        row_heights=[0.5, 0.5],
+        subplot_titles=("Stato di Carica (Litri Equivalenti)", "Temperatura Erogazione (°C)")
+    )
+    
+    fig_comp.add_trace(go.Scatter(x=x_time/60, y=soc_pcm, mode='lines', name='Accumulo i-TES (PCM)', line=dict(color='#007acc', width=3)), row=1, col=1)
+    fig_comp.add_trace(go.Scatter(x=x_time/60, y=soc_water, mode='lines', name=f'Accumulo {comp_target}', line=dict(color='#2ca02c', width=2, dash='dot')), row=1, col=1) 
+    fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_pcm, mode='lines', name='Temp. Acqua i-TES (PCM)', line=dict(color='#007acc', width=3)), row=2, col=1)
+    fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_water, mode='lines', name=f'Temp. Istantanea {comp_target}', line=dict(color='#ff7f0e', width=1, dash='dot')), row=2, col=1) 
+    fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_water_ma, mode='lines', name=f'Temp. Media Mobile (60m) {comp_target}', line=dict(color='#d62728', width=2.5)), row=2, col=1)
+    
+    fig_comp.update_layout(title="Confronto Dinamico Completo", height=700)
+    fig_comp.update_yaxes(title_text="Volume (L)", row=1, col=1)
+    fig_comp.update_yaxes(title_text="Temperatura (°C)", row=2, col=1)
+    st.plotly_chart(fig_comp, use_container_width=True)
+    
+    # Calculations for Table
+    cop_pcm = estimate_cop(t_pcm)
+    cop_water = estimate_cop(t_water_set)
+    elec_price = 0.31
+    cost_per_cycle = 0.15
+    startup_penalty_kwh = 0.05
+    
+    kwh_elec_pcm_year = (kwh_pcm * 365) / cop_pcm
+    kwh_elec_water_year = (kwh_water_therm * 365) / cop_water
+    
+    # Cost components
+    pcm_cost_energy = kwh_elec_pcm_year * elec_price
+    water_cost_energy = kwh_elec_water_year * elec_price
+    
+    # Delta calculations
+    delta_cycles_year = (cycles_water - cycles_pcm) * 365
+    saving_energy_year = water_cost_energy - pcm_cost_energy
+    saving_maint_year = delta_cycles_year * cost_per_cycle
+    saving_startup_elec_year = delta_cycles_year * startup_penalty_kwh * elec_price
+    
+    total_saving_year = saving_energy_year + saving_maint_year + saving_startup_elec_year
+    
+    if t_water_set > t_pcm:
+        energy_pcm_at_water_cop = (kwh_pcm * 365) / cop_water
+        energy_pcm_at_pcm_cop = (kwh_pcm * 365) / cop_pcm
+        cost_extra_temp = (energy_pcm_at_water_cop - energy_pcm_at_pcm_cop) * elec_price
+
+    # TABLE DATA
+    pcm_total_annual_cost = pcm_cost_energy + (cycles_pcm * 365 * startup_penalty_kwh * elec_price)
+    water_total_annual_cost = water_cost_energy + (cycles_water * 365 * startup_penalty_kwh * elec_price)
+    
+    st.markdown("### 📊 Dettaglio Consumi Assoluti (Stima Annuale)")
+    consumption_data = {
+        "Metrica": ["Energia Termica (kWh_t)", "Energia Elettrica (kWh_e)", "Costo Elettrico (€)", "Costo Start-up (€)", "Costo Manutenzione (€)"],
+        "i-TES (PCM)": [
+            f"{kwh_pcm*365:,.0f}", 
+            f"{kwh_elec_pcm_year:,.0f}", 
+            f"€ {pcm_cost_energy:,.0f}",
+            f"€ {cycles_pcm * 365 * startup_penalty_kwh * elec_price:,.0f}",
+            "Included"
+        ],
+        f"{comp_target}": [
+            f"{kwh_water_therm*365:,.0f}", 
+            f"{kwh_elec_water_year:,.0f}", 
+            f"€ {water_cost_energy:,.0f}",
+            f"€ {cycles_water * 365 * startup_penalty_kwh * elec_price:,.0f}",
+            f"€ {delta_cycles_year * cost_per_cycle:,.0f} (Extra)"
+        ],
+        "Differenza (Risparmio)": [
+            f"{(kwh_water_therm-kwh_pcm)*365:,.0f}", 
+            f"{(kwh_elec_water_year-kwh_elec_pcm_year):,.0f}", 
+            f"€ {saving_energy_year:,.0f}",
+            f"€ {saving_startup_elec_year:,.0f}",
+            f"€ {saving_maint_year:,.0f}"
+        ]
+    }
+    st.table(pd.DataFrame(consumption_data))
+    
+    # Saving Metrics Display
+    st.markdown("### 💰 Riepilogo Risparmio Economico")
+    col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+    col_res1.metric("Risp. Elettrico (COP & Disp.)", f"€ {saving_energy_year:,.0f}", help="Risparmio dovuto alla miglior efficienza (COP) e minori dispersioni")
+    col_res2.metric("Risp. Elettrico (Start-up)", f"€ {saving_startup_elec_year:,.0f}", help="Energia risparmiata evitando i continui avvii del compressore")
+    col_res3.metric("Risp. Manutenzione (Usura)", f"€ {saving_maint_year:,.0f}", help="Minor usura meccanica dovuta alla riduzione dei cicli")
+    col_res4.metric("TOTALE RISPARMIO ANNUO", f"€ {total_saving_year:,.0f}", delta="Totale", delta_color="normal")
+    
+    with st.expander("ℹ️ Dettaglio Risparmio Elettrico (COP & Disp.)"):
+        st.markdown(f"""
+        Questo risparmio combina due fattori fondamentali:
+        1. **Miglior Efficienza (COP):** La PdC per i-TES lavora a {t_pcm}°C (COP {cop_pcm:.2f}), mentre per il {comp_target} lavora a {t_water_set}°C (COP {cop_water:.2f}).
+        2. **Minori Dispersioni:** Mantenere un volume d'acqua sempre ad alta temperatura comporta maggiori perdite termiche rispetto al PCM.
+
+        **Calcolo:**
+        * **Consumo Elettrico {comp_target}:** {kwh_elec_water_year:,.0f} kWh/anno
+        * **Consumo Elettrico i-TES:** {kwh_elec_pcm_year:,.0f} kWh/anno
+        * **Delta Energia:** {kwh_elec_water_year - kwh_elec_pcm_year:,.0f} kWh
+        * **Risparmio:** {kwh_elec_water_year - kwh_elec_pcm_year:,.0f} kWh × {elec_price} €/kWh = **€ {saving_energy_year:,.0f}**
+        """)
+
+    if cost_extra_temp > 0:
+        with st.expander("ℹ️ Dettaglio Calcolo Penalità COP (Legionella)"):
+            st.markdown(f"""
+            Per prevenire la legionella, il volano ad acqua deve essere mantenuto a **{t_water_set:.1f}°C**, mentre la batteria PCM lavora a **{t_pcm}°C**.
+            L'aumento della temperatura di mandata riduce l'efficienza (COP) della Pompa di Calore:
+            
+            1.  **COP a {t_pcm}°C (PCM):** {cop_pcm:.2f}
+            2.  **COP a {t_water_set:.1f}°C (Volano):** {cop_water:.2f} (Penalità: {((cop_pcm-cop_water)/cop_pcm)*100:.1f}%)
+            """)
+            
+    with st.expander("ℹ️ Dettaglio Risparmio Manutenzione (Usura)"):
+        st.markdown(f"""
+        Il risparmio è calcolato sulla riduzione dello stress meccanico del compressore.
+        * **Cicli Annui i-TES:** {cycles_pcm * 365:,.0f}
+        * **Cicli Annui {comp_target}:** {cycles_water * 365:,.0f}
+        * **Differenza:** {delta_cycles_year:,.0f} cicli in meno.
+        """)
+
+    with st.expander("ℹ️ Dettaglio Risparmio Elettrico (Transitori Start-up)"):
+        st.markdown(f"""
+        Ogni volta che la Pompa di Calore si avvia, necessita di una fase di "ramp-up" a bassa efficienza.
+        * **Penalità Energetica per Avvio:** {startup_penalty_kwh} kWh
+        * **Calcolo:** {delta_cycles_year:,.0f} cicli evitati × {startup_penalty_kwh} kWh/ciclo × {elec_price} €/kWh = **€ {saving_startup_elec_year:,.0f}**
+        """)
+
+    st.caption(f"**Fonte Prezzo Energia:** Stima basata su dati ARERA (~0.31 €/kWh).")
+
+# --- GRAFICO EN 806 ---
+with st.expander("📉 Vedi Grafico Normativo EN 806-3", expanded=False):
     x_vals = np.logspace(0, 3, 100)
     y_vals = [calcola_qd_en806(x, max_lu_unit) for x in x_vals]
     fig_en = go.Figure()
-    fig_en.add_trace(go.Scatter(x=x_vals, y=y_vals, mode='lines', name='Curva Normativa', line=dict(color='#007acc', width=3), hovertemplate='LU: %{x:.1f}<br>Portata: %{y:.2f} l/s<extra></extra>'))
-    fig_en.add_trace(go.Scatter(x=[lu_totali], y=[qd_ls_target], mode='markers', name='Punto Progetto', marker=dict(color='red', size=15, line=dict(color='black', width=2)), hovertemplate='<b>IL TUO PROGETTO</b><br>Totale LU: %{x:.0f}<br>Portata Target: %{y:.2f} l/s<extra></extra>'))
-    fig_en.update_layout(xaxis_type="log", yaxis_type="log", xaxis_title="Load Units Totali (LU)", yaxis_title="Portata di Progetto (l/s)", margin=dict(l=20, r=20, t=30, b=20), height=400, legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
+    fig_en.add_trace(go.Scatter(x=x_vals, y=y_vals, mode='lines', name='Curva Normativa'))
+    fig_en.add_trace(go.Scatter(x=[lu_totali], y=[qd_ls_target], mode='markers', name='Punto Progetto'))
+    fig_en.update_layout(xaxis_type="log", yaxis_type="log")
     st.plotly_chart(fig_en, use_container_width=True)
