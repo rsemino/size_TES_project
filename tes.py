@@ -17,7 +17,7 @@ st.title("🚰 Simulatore i-TES: Site-Specific & Confronto Tecnologico")
 # --- GESTIONE STATO ---
 if 'qty_6' not in st.session_state: st.session_state.qty_6 = 0
 if 'qty_12' not in st.session_state: st.session_state.qty_12 = 0
-if 'qty_20' not in st.session_state: st.session_state.qty_20 = 1
+if 'qty_20' not in st.session_state: st.session_state.qty_20 = 0
 if 'qty_40' not in st.session_state: st.session_state.qty_40 = 0
 if 'lat' not in st.session_state: st.session_state.lat = 41.9028 # Default Roma
 if 'lon' not in st.session_state: st.session_state.lon = 12.4964
@@ -269,7 +269,6 @@ def get_suggested_hp(target_kw, target_temp):
 
 # --- FUNZIONE CURVE REALI SANICUBE (V40) ---
 def get_sanicube_v40_at_flow(flow_lmin, t_store):
-    # Dati grezzi estratti dal documento HYC 544/32/0 (simile a 500L)
     data_500 = {
         50: {11: 1550, 12: 990, 15: 530, 20: 290, 25: 180, 30: 100, 35: 50},
         55: {11: 1900, 12: 1280, 15: 730, 20: 450, 25: 320, 30: 220, 35: 150},
@@ -278,20 +277,13 @@ def get_sanicube_v40_at_flow(flow_lmin, t_store):
         70: {11: 2300, 12: 1640, 15: 1060, 20: 770, 25: 610, 30: 500, 35: 430},
         75: {11: 2400, 12: 1700, 15: 1140, 20: 850, 25: 680, 30: 570, 35: 490}
     }
-    
-    # 1. Trova temperatura più vicina disponibile
     avail_temps = sorted(data_500.keys())
     closest_t = min(avail_temps, key=lambda x: abs(x - t_store))
     curve_data = data_500[closest_t]
-    
-    # 2. Interpola sulla portata
     flows = np.array(sorted(curve_data.keys()))
     v40s = np.array([curve_data[f] for f in flows])
-    
-    # Se fuori range, estrapola o clampa
     if flow_lmin < flows[0]: return v40s[0]
     if flow_lmin > flows[-1]: return v40s[-1]
-    
     return np.interp(flow_lmin, flows, v40s)
 
 # ==========================================
@@ -634,11 +626,29 @@ if suggested_tank:
     
     ites_dims_str = ""
     batt_detail_str = ""
+    ites_physical_vol_L = 0 
     for qty, size in config:
         if qty > 0 and size in PCM_SPECS_DB:
             spec = PCM_SPECS_DB[size]
             ites_dims_str += f"- {qty}x [L {spec['w']} x P {spec['d']} x H {spec['h']} mm]\n"
             batt_detail_str += f"- {qty}x i-{size}: € {qty * prices[size]:,.0f}\n"
+            # Calc Volume Liters
+            vol_single = (spec['w'] * spec['d'] * spec['h']) / 1000000.0
+            ites_physical_vol_L += (vol_single * qty)
+    
+    tank_physical_vol_L = 0
+    if suggested_tank:
+        if is_sanicube:
+            # Sanicube (Prisma): W x D x H. Assumiamo base quadrata con lato 'd'
+            # Convert mm^3 to Liters
+            vol_single_geo = (suggested_tank['d'] * suggested_tank['d'] * suggested_tank['h']) / 1000000.0
+            tank_physical_vol_L = vol_single_geo * tank_qty
+        else:
+            # Generic (Cilindro): pi * r^2 * h
+            radius_dm = (suggested_tank['d'] / 100.0) / 2.0
+            height_dm = suggested_tank['h'] / 100.0
+            vol_single_tank = math.pi * (radius_dm**2) * height_dm # Liters (dm^3)
+            tank_physical_vol_L = vol_single_tank * tank_qty
 
     valid_hps_ites = get_suggested_hp(p_hp_tot_input, t_pcm)
     hp_ites_sel = valid_hps_ites[0] if valid_hps_ites else None
@@ -658,6 +668,7 @@ if suggested_tank:
         st.info(f"### 🔋 Soluzione i-TES (PCM)\n"
                 f"**Temp. Stoccaggio:** {t_pcm}°C\n\n"
                 f"**Ingombro Moduli:**\n{ites_dims_str}\n"
+                f"**Volume Occupato:** {ites_physical_vol_L:.0f} Litri\n\n"
                 f"**Dettaglio Costo Batterie:**\n{batt_detail_str}\n"
                 f"**Costo Batterie Totale:** € {total_cost:,.0f}\n\n"
                 f"---\n"
@@ -680,6 +691,7 @@ if suggested_tank:
                    f"**Modello Suggerito:** {suggested_tank['brand']} {suggested_tank['model']}\n\n"
                    f"**Quantità:** {tank_qty}x ({tank_total_vol} Litri totali)\n\n"
                    f"**Dimensioni Unit:** Ø {suggested_tank['d']} mm x H {suggested_tank['h']} mm\n\n"
+                   f"**Volume Occupato:** {tank_physical_vol_L:.0f} Litri\n\n"
                    f"**Costo Volano:** € {tank_total_price:,.0f}\n\n"
                    f"---\n"
                    f"**Pompa di Calore Suggerita (T_max > {t_water_set}°C):**\n"
@@ -710,6 +722,15 @@ if suggested_tank:
     if hp_ites_sel and hp_water_sel:
         delta_capex_hp = hp_water_sel['price'] - hp_ites_sel['price']
 
+    # --- TABELLA CONFRONTO INGOMBRI ---
+    st.markdown("#### 📏 Confronto Spazi Occupati")
+    col_space1, col_space2 = st.columns(2)
+    saving_vol_L = tank_physical_vol_L - ites_physical_vol_L
+    saving_pct = (saving_vol_L / tank_physical_vol_L * 100) if tank_physical_vol_L > 0 else 0
+    
+    col_space1.metric("Volume Fisico i-TES", f"{ites_physical_vol_L:.0f} L")
+    col_space2.metric(f"Volume Fisico {comp_target}", f"{tank_physical_vol_L:.0f} L", delta=f"-{saving_pct:.0f}% vs i-TES" if saving_pct > 0 else None, delta_color="inverse")
+
     st.caption(f"*Nota: Il volano termico deve contenere {tank_total_vol:.0f} litri d'acqua a {t_water_set}°C per eguagliare il V40 delle batterie i-TES.*")
 
 st.divider()
@@ -719,7 +740,6 @@ sys_flows, sys_powers, sys_temps, sys_v40_volumes = get_system_curves(config, t_
 
 # FUNZIONE PER LE CURVE REALI SANICUBE (V40)
 def get_sanicube_v40_at_flow(flow_lmin, t_store):
-    # Dati grezzi estratti dal documento fornito (HYC 544/32/0 simile a 500L)
     data_500 = {
         50: {11: 1550, 12: 990, 15: 530, 20: 290, 25: 180, 30: 100, 35: 50},
         55: {11: 1900, 12: 1280, 15: 730, 20: 450, 25: 320, 30: 220, 35: 150},
@@ -728,65 +748,103 @@ def get_sanicube_v40_at_flow(flow_lmin, t_store):
         70: {11: 2300, 12: 1640, 15: 1060, 20: 770, 25: 610, 30: 500, 35: 430},
         75: {11: 2400, 12: 1700, 15: 1140, 20: 850, 25: 680, 30: 570, 35: 490}
     }
-    
-    # 1. Trova temperatura più vicina disponibile
     avail_temps = sorted(data_500.keys())
     closest_t = min(avail_temps, key=lambda x: abs(x - t_store))
     curve_data = data_500[closest_t]
-    
-    # 2. Interpola sulla portata
     flows = np.array(sorted(curve_data.keys()))
     v40s = np.array([curve_data[f] for f in flows])
-    
-    # Se fuori range, estrapola o clampa
     if flow_lmin < flows[0]: return v40s[0]
     if flow_lmin > flows[-1]: return v40s[-1]
-    
     return np.interp(flow_lmin, flows, v40s)
 
+# --- LAYOUT GRAFICI ---
+# Riga 1: Potenza e Temperatura (i-TES)
+col_pt1, col_pt2 = st.columns(2)
+
 if len(sys_flows) > 0:
-    col_g1, col_g2, col_g3 = st.columns(3)
-    with col_g1:
-        st.subheader("⚡ Potenza")
+    with col_pt1:
+        st.subheader("⚡ Potenza i-TES")
         fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=sys_flows, y=sys_powers, fill='tozeroy', mode='lines', line=dict(color='#2a9d8f', width=2), name='Max Potenza', hovertemplate='Portata: %{x:.1f} L/min<br>Max Power: %{y:.1f} kW<extra></extra>'))
+        fig1.add_trace(go.Scatter(x=sys_flows, y=sys_powers, fill='tozeroy', mode='lines', line=dict(color='#2a9d8f', width=2), name='Max Potenza'))
         limit_p = np.interp(qp_lmin_target, sys_flows, sys_powers)
         col_pt = 'green' if p_req_batt <= limit_p else 'red'
-        fig1.add_trace(go.Scatter(x=[qp_lmin_target], y=[p_req_batt], mode='markers', marker=dict(color=col_pt, size=14, line=dict(color='black', width=2)), name='Punto Lavoro', hovertemplate='Richiesta: %{x:.1f} L/min<br>Serve: %{y:.1f} kW<extra></extra>'))
+        fig1.add_trace(go.Scatter(x=[qp_lmin_target], y=[p_req_batt], mode='markers', marker=dict(color=col_pt, size=14, line=dict(color='black', width=2)), name='Punto Lavoro'))
         fig1.update_layout(xaxis_title="Portata (L/min)", yaxis_title="Potenza (kW)", margin=dict(l=20,r=20,t=30,b=20), height=350)
         st.plotly_chart(fig1, use_container_width=True)
-    with col_g2:
-        st.subheader("🌡️ Temperatura")
+    
+    with col_pt2:
+        st.subheader("🌡️ Temperatura i-TES")
         fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=sys_flows, y=sys_temps, mode='lines', line=dict(color='#e76f51', width=2), name='Temp. Uscita', hovertemplate='Portata: %{x:.1f} L/min<br>Temp: %{y:.1f} °C<extra></extra>'))
+        fig2.add_trace(go.Scatter(x=sys_flows, y=sys_temps, mode='lines', line=dict(color='#e76f51', width=2), name='Temp. Uscita'))
         t_pt = np.interp(qp_lmin_target, sys_flows, sys_temps)
         fig2.add_trace(go.Scatter(x=[qp_lmin_target], y=[t_pt], mode='markers+text', marker=dict(color='orange', size=14, line=dict(color='black', width=2)), text=[f"{t_pt:.1f}°C"], textposition="top center", name='Punto Lavoro'))
         fig2.update_layout(xaxis_title="Portata (L/min)", yaxis_title="Temp (°C)", margin=dict(l=20,r=20,t=30,b=20), height=350)
         st.plotly_chart(fig2, use_container_width=True)
-    with col_g3:
+
+# Riga 2: Volume V40 e Efficienza Volumetrica
+col_g1, col_g2 = st.columns(2)
+
+if len(sys_flows) > 0:
+    with col_g1:
         st.subheader("💧 Volume V40 Totale")
         fig3 = go.Figure()
         display_max_y = 10000 
         plot_v40_vol = [min(v, display_max_y) for v in sys_v40_volumes]
         fig3.add_trace(go.Scatter(x=sys_flows, y=plot_v40_vol, mode='lines', line=dict(color='#457b9d', width=2), name='i-TES V40', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
         
-        # AGGIUNTA CURVA SANICUBE SE SELEZIONATO
+        sanicube_v40_curve = [] # Defined here to be used in next chart
         if is_sanicube:
-            sanicube_v40_curve = []
-            # Calculate total volume for multiple tanks
-            # Assuming linear scaling with quantity which is a simplification but valid for parallel connection
             for f in sys_flows:
-                 # Single tank V40
-                 single_v40 = get_sanicube_v40_at_flow(f / tank_qty, t_water_set) # Flow split per tank
+                 single_v40 = get_sanicube_v40_at_flow(f / tank_qty, t_water_set) 
                  sanicube_v40_curve.append(single_v40 * tank_qty)
-            
             fig3.add_trace(go.Scatter(x=sys_flows, y=sanicube_v40_curve, mode='lines', line=dict(color='#e67e22', width=2, dash='dash'), name='Sanicube V40 (Reale)', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
 
         pt_v40_vis = min(total_v40_liters, display_max_y)
-        label_v40 = f"{total_v40_liters:.0f} L" if total_v40_liters < 9000 else "> 9000 L"
-        fig3.add_trace(go.Scatter(x=[qp_lmin_target], y=[pt_v40_vis], mode='markers', marker=dict(color='purple', size=14, line=dict(color='black', width=2)), name='Punto Lavoro', hovertemplate=f'<b>Punto Lavoro</b><br>Portata: %{{x:.1f}} L/min<br>Volume: {label_v40}<extra></extra>'))
-        fig3.update_layout(xaxis_title="Portata (L/min)", yaxis_title="Volume V40 (Litri)", margin=dict(l=20,r=20,t=30,b=20), height=350, yaxis=dict(range=[0, min(max(plot_v40_vol)*1.1, display_max_y)]))
+        fig3.add_trace(go.Scatter(x=[qp_lmin_target], y=[pt_v40_vis], mode='markers', marker=dict(color='purple', size=14, line=dict(color='black', width=2)), name='Punto Lavoro'))
+        fig3.update_layout(xaxis_title="Portata (L/min)", yaxis_title="Volume V40 (Litri)", margin=dict(l=20,r=20,t=30,b=20), height=350)
         st.plotly_chart(fig3, use_container_width=True)
+
+    # --- NUOVO GRAFICO EFFICIENZA VOLUMETRICA ---
+    with col_g2:
+        st.subheader("📦 Efficienza Volumetrica (V40/Litro)")
+        fig_ratio = go.Figure()
+        
+        # i-TES Ratio
+        if ites_physical_vol_L > 0:
+            ratio_ites = [v / ites_physical_vol_L for v in plot_v40_vol]
+            fig_ratio.add_trace(go.Scatter(x=sys_flows, y=ratio_ites, mode='lines', line=dict(color='#457b9d', width=2), name='i-TES'))
+            
+            # Point
+            curr_v40_ites = np.interp(qp_lmin_target, sys_flows, plot_v40_vol)
+            curr_ratio_ites = curr_v40_ites / ites_physical_vol_L
+            fig_ratio.add_trace(go.Scatter(x=[qp_lmin_target], y=[curr_ratio_ites], mode='markers', marker=dict(color='#457b9d', size=10), name='Punto Lavoro i-TES'))
+        
+        # Tank Ratio
+        if tank_physical_vol_L > 0:
+            if is_sanicube:
+                ratio_tank = [v / tank_physical_vol_L for v in sanicube_v40_curve]
+                fig_ratio.add_trace(go.Scatter(x=sys_flows, y=ratio_tank, mode='lines', line=dict(color='#e67e22', width=2, dash='dash'), name='Sanicube'))
+                
+                # Point
+                curr_v40_sani = np.interp(qp_lmin_target, sys_flows, sanicube_v40_curve)
+                curr_ratio_sani = curr_v40_sani / tank_physical_vol_L
+                fig_ratio.add_trace(go.Scatter(x=[qp_lmin_target], y=[curr_ratio_sani], mode='markers', marker=dict(color='#e67e22', size=10), name='Punto Lavoro Sanicube'))
+
+            else:
+                # Generic Tank (Approximation)
+                ratio_val = total_v40_liters / tank_physical_vol_L if tank_physical_vol_L > 0 else 0
+                fig_ratio.add_trace(go.Scatter(x=[sys_flows[0], sys_flows[-1]], y=[ratio_val, ratio_val], mode='lines', line=dict(color='green', width=2, dash='dot'), name='Volano Gen.'))
+                fig_ratio.add_trace(go.Scatter(x=[qp_lmin_target], y=[ratio_val], mode='markers', marker=dict(color='green', size=10), name='Punto Lavoro Volano'))
+        
+        fig_ratio.update_layout(
+            xaxis_title="Portata (L/min)", 
+            yaxis_title="Ratio V40 / Vol. Fisico", 
+            title="Litri V40 erogati per ogni Litro di spazio occupato",
+            margin=dict(l=20,r=20,t=40,b=20), 
+            height=350
+        )
+        st.plotly_chart(fig_ratio, use_container_width=True)
+
 else:
     st.warning("Aggiungi batterie per vedere i grafici.")
 
@@ -1120,6 +1178,65 @@ with st.expander(f"🆚 2. Confronto Tecnologico (i-TES vs {comp_target})", expa
         """)
 
     st.caption(f"**Fonte Prezzo Energia:** Stima basata su dati ARERA (~0.31 €/kWh).")
+
+    # --- ANALISI BREAK-EVEN (ROI) ---
+    st.markdown("### 💸 Analisi di Break-even (ROI)")
+    
+    delta_investment = total_system_ites_cost - total_system_water_cost
+    
+    if delta_investment <= 0:
+        st.success(f"✅ **L'investimento i-TES è più economico o uguale.**\n\nRisparmio immediato all'acquisto: **€ {-delta_investment:,.0f}**\nOltre a un risparmio operativo annuo di **€ {total_saving_year:,.0f}**.")
+    elif total_saving_year <= 0:
+        st.error(f"❌ **Il sistema i-TES costa di più (€ {delta_investment:,.0f}) e non genera risparmio operativo in queste condizioni.**\nVerificare i parametri (es. costo energia, temperature).")
+    else:
+        years = 15
+        x_years = list(range(years + 1))
+        
+        # Cumulative Cash Flow (Net Benefit Approach)
+        # Year 0: -Delta Investment
+        # Year N: Previous + Annual Saving
+        cash_flow = []
+        curr = -delta_investment
+        for y in x_years:
+            cash_flow.append(curr)
+            curr += total_saving_year
+        
+        # Create Plot
+        fig_roi = go.Figure()
+        
+        # Line 1: Net Cumulative Savings
+        fig_roi.add_trace(go.Scatter(
+            x=x_years, 
+            y=cash_flow, 
+            mode='lines+markers', 
+            name='Flusso di Cassa Cumulato',
+            line=dict(color='green', width=3),
+            fill='tozeroy',
+            fillcolor='rgba(0, 255, 0, 0.1)' # Light green area below
+        ))
+        
+        # Zero Line (Break-even)
+        fig_roi.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Break-even Point")
+        
+        fig_roi.update_layout(
+            title="Rientro dell'Investimento (Differenziale)",
+            xaxis_title="Anni",
+            yaxis_title="Bilancio Economico (€)",
+            height=400,
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig_roi, use_container_width=True)
+        
+        roi_years = delta_investment / total_saving_year
+        st.metric("Tempo di Ritorno (Payback)", f"{roi_years:.1f} Anni", help="Tempo necessario affinché i risparmi operativi coprano il maggior costo iniziale.")
+        
+        if roi_years < 5:
+            st.success(f"🚀 **Ottimo investimento!** Il sistema si ripaga in soli {roi_years:.1f} anni.")
+        elif roi_years < 10:
+            st.warning(f"⚠️ **Investimento a medio termine.** Rientro in {roi_years:.1f} anni.")
+        else:
+            st.info(f"ℹ️ **Investimento a lungo termine.** Rientro in {roi_years:.1f} anni.")
 
 # --- GRAFICO EN 806 ---
 with st.expander("📉 Vedi Grafico Normativo EN 806-3", expanded=False):
