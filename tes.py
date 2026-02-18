@@ -137,13 +137,9 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0, flow_correctio
         f_tot, p_tot_batt, weighted_temp_sum = 0, 0, 0
         for qty, size in config:
             if qty > 0:
-                # Applichiamo la correzione alla portata del singolo modulo
                 f_single_nominal = limits[size] * alpha
                 f_single_corrected = f_single_nominal * correction_factor
                 
-                # Le prestazioni (P e T) sono legate alla portata "fisica" che attraversa lo scambiatore.
-                # Se "correggiamo" la portata, stiamo dicendo che a parità di condizioni la batteria accetta più/meno flusso.
-                # Per calcolare P e T usiamo la portata NON corretta (la curva di base), ma associamo il risultato alla portata CORRETTA.
                 p_single = float(interpolators_p[size](f_single_nominal))
                 t_single = float(interpolators_t[size](f_single_nominal))
                 
@@ -157,7 +153,6 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0, flow_correctio
         t_mix = weighted_temp_sum / f_tot if f_tot > 0 else 0
         sys_temps.append(t_mix)
         
-        # Calcolo V40 basato sul deficit
         p_req_at_flow = f_tot * dt_calc * 0.0697
         p_deficit = p_req_at_flow - p_hp_tot
         v40_vol = (e_tot_e0 / p_deficit) * 60 * f_tot if p_deficit > 0 else 99999 
@@ -166,10 +161,13 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0, flow_correctio
     return sys_flows, sys_powers, sys_temps, sys_v40_volumes
 
 def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
+    # Reference: UNI 9182 for daily volume
     liters_per_person = 50 
     if building_type == "Ufficio": liters_per_person = 15
     elif building_type == "Hotel": liters_per_person = 80
     total_daily_vol = n_people * liters_per_person
+    
+    # Reference: Engineering Standard Load Profiles (ASHRAE/UNI TS 11300 equivalent shape)
     profiles = {
         "Residenziale": [0.5, 0.2, 0.1, 0.1, 0.5, 2.0, 8.0, 12.0, 9.0, 6.0, 5.0, 4.0, 5.0, 4.0, 3.0, 3.0, 4.0, 6.0, 10.0, 11.0, 5.0, 2.0, 1.0, 0.6],
         "Ufficio":      [0, 0, 0, 0, 0, 0, 2, 8, 15, 12, 10, 15, 12, 10, 8, 5, 3, 0, 0, 0, 0, 0, 0, 0],
@@ -419,11 +417,19 @@ DAIKIN_SANICUBE_DB = [
 
 # --- SELETTORE CONFRONTO (Sidebar) ---
 st.sidebar.markdown("---")
-comp_target = st.sidebar.radio("Scegli Tecnologia di Confronto", ["Volano Termico Generico", "Daikin Sanicube (Drain-Back)"])
-is_sanicube = comp_target == "Daikin Sanicube (Drain-Back)"
+# SWITCH PER ABILITARE/DISABILITARE IL CONFRONTO
+show_comparison = st.sidebar.toggle("🆚 Attiva Confronto Tecnologico", value=True)
 
-if is_sanicube:
-    t_sanicube_set = st.sidebar.select_slider("Temp. Accumulo Sanicube (°C)", options=[50, 55, 60, 65, 70, 75], value=60)
+if show_comparison:
+    comp_target = st.sidebar.radio("Scegli Tecnologia di Confronto", ["Volano Termico Generico", "Daikin Sanicube (Drain-Back)"])
+    is_sanicube = comp_target == "Daikin Sanicube (Drain-Back)"
+    if is_sanicube:
+        t_sanicube_set = st.sidebar.select_slider("Temp. Accumulo Sanicube (°C)", options=[50, 55, 60, 65, 70, 75], value=60)
+else:
+    # Defaults quando il confronto è spento
+    is_sanicube = False
+    comp_target = "Nessuno"
+    t_sanicube_set = 60.0
 
 # --- SEZIONE INPUT UTENTE (Sidebar) ---
 st.sidebar.header("Parametri Progetto")
@@ -467,8 +473,10 @@ with st.sidebar.expander("🔋 4. Batterie i-TES", expanded=True):
     manage_qty('qty_40', "i-40")
     
     st.markdown("---")
+    t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True)
     
     # FLOW CORRECTION (ALWAYS VISIBLE)
+    st.markdown("---")
     flow_correction_pct = st.number_input("Coeff. Correzione Portata (%)", step=1, key="flow_correction_pct")
 
     # AUTOPILOT TOGGLE
@@ -515,7 +523,7 @@ with st.sidebar.expander("🔋 4. Batterie i-TES", expanded=True):
                     for q, s in zip([q6, q12, q20, q40], [6, 12, 20, 40]):
                         v0 = params_v40[s]['V0']
                         # Assuming t_pcm from state, careful if not set yet, use default
-                        t_pcm_val = st.session_state.get('t_pcm_radio', 58) 
+                        t_pcm_val = t_pcm
                         if t_pcm_val >= 58: v0 /= 0.76
                         e_tot += (v0 * 4.186 * dt_target) / 3600.0 * q
                     
@@ -570,9 +578,6 @@ with st.sidebar.expander("🔋 4. Batterie i-TES", expanded=True):
                     st.rerun()
                 else:
                     st.error("Nessuna soluzione valida trovata.")
-
-    st.markdown("---")
-    t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True, key="t_pcm_radio")
 
 # --- CALCOLI PRINCIPALI ---
 # Ora che t_pcm è stato definito nella sidebar, possiamo usarlo
@@ -684,7 +689,7 @@ st.divider()
 
 # --- CONFRONTO VOLANO TERMICO ---
 if suggested_tank:
-    st.subheader(f"🆚 Confronto Tecnologico: i-TES vs {comp_target}")
+    st.subheader(f"🆚 Confronto Tecnologico: i-TES{f' vs {comp_target}' if show_comparison else ''}")
     
     ites_dims_str = ""
     batt_detail_str = ""
@@ -724,9 +729,63 @@ if suggested_tank:
     hp_water_price = hp_water_sel['price'] if hp_water_sel else 0
     total_system_water_cost = tank_total_price + hp_water_price
 
-    col_comp1, col_comp2 = st.columns(2)
-    
-    with col_comp1:
+    if show_comparison:
+        col_comp1, col_comp2 = st.columns(2)
+        with col_comp1:
+            st.info(f"### 🔋 Soluzione i-TES (PCM)\n"
+                    f"**Temp. Stoccaggio:** {t_pcm}°C\n\n"
+                    f"**Ingombro Moduli:**\n{ites_dims_str}\n"
+                    f"**Volume Occupato:** {ites_physical_vol_L:.0f} Litri\n\n"
+                    f"**Dettaglio Costo Batterie:**\n{batt_detail_str}\n"
+                    f"**Costo Batterie Totale:** € {total_cost:,.0f}\n\n"
+                    f"---\n"
+                    f"**Pompa di Calore Suggerita:**\n"
+                    f"{hp_ites_sel['brand'] if hp_ites_sel else 'N/A'} {hp_ites_sel['model'] if hp_ites_sel else ''}\n"
+                    f"- Potenza: {hp_ites_sel['kw'] if hp_ites_sel else '-'} kW\n"
+                    f"- Gas: {hp_ites_sel['gas'] if hp_ites_sel else '-'}\n"
+                    f"- Max T: {hp_ites_sel.get('max_t','-') if hp_ites_sel else '-'}°C\n"
+                    f"- Costo Est.: € {hp_ites_price:,.0f}\n"
+                    f"---\n"
+                    f"### 💰 TOTALE SISTEMA: € {total_system_ites_cost:,.0f}")
+            st.caption("⚠️ Contattare fornitore per conferma")
+                    
+        with col_comp2:
+            tech_icon = "🛢️" if not is_sanicube else "🧴"
+            tech_name = "Volano Termico Equivalente" if not is_sanicube else "Daikin Sanicube Equivalente"
+            
+            st.success(f"### {tech_icon} {tech_name}\n"
+                    f"**Temp. Stoccaggio:** {t_water_set}°C (Anti-Legionella)\n\n"
+                    f"**Modello Suggerito:** {suggested_tank['brand']} {suggested_tank['model']}\n\n"
+                    f"**Quantità:** {tank_qty}x ({tank_total_vol} Litri totali)\n\n"
+                    f"**Dimensioni Unit:** Ø {suggested_tank['d']} mm x H {suggested_tank['h']} mm\n\n"
+                    f"**Volume Occupato:** {tank_physical_vol_L:.0f} Litri\n\n"
+                    f"**Costo Volano:** € {tank_total_price:,.0f}\n\n"
+                    f"---\n"
+                    f"**Pompa di Calore Suggerita (T_max > {t_water_set}°C):**\n"
+                    f"{hp_water_sel['brand'] if hp_water_sel else 'N/A'} {hp_water_sel['model'] if hp_water_sel else ''}\n"
+                    f"- Potenza: {hp_water_sel['kw'] if hp_water_sel else '-'} kW\n"
+                    f"- Gas: {hp_water_sel['gas'] if hp_water_sel else '-'}\n"
+                    f"- Max T: {hp_water_sel.get('max_t','-') if hp_water_sel else '-'}°C\n"
+                    f"- Costo Est.: € {hp_water_price:,.0f}\n"
+                    f"---\n"
+                    f"### 💰 TOTALE SISTEMA: € {total_system_water_cost:,.0f}")
+            st.caption("⚠️ Contattare fornitore per conferma")
+            
+            with st.expander("ℹ️ Nota Tecnica: Perché una PdC ad Alta Temperatura?"):
+                st.markdown(f"""
+                Per mantenere il volano a **{t_water_set}°C**, è necessario un generatore capace di raggiungere questa temperatura con un margine operativo adeguato (es. +5°C), per evitare di far lavorare il compressore sempre al limite.
+                """)
+            
+            if is_sanicube:
+                with st.expander("ℹ️ Info Daikin Sanicube"):
+                    st.markdown("""
+                    Il sistema **Daikin Sanicube** utilizza un accumulo di acqua tecnica (non potabile) con produzione istantanea di ACS.
+                    * **Igiene:** Grazie al principio semi-istantaneo, non vi è ristagno di acqua potabile, riducendo drasticamente il rischio Legionella.
+                    * **Materiali:** Costruito in materiale plastico, è esente da corrosione.
+                    * **Drain-Back:** Può essere integrato con sistemi solari a svuotamento.
+                    """)
+    else:
+        # STAND-ALONE MODE
         st.info(f"### 🔋 Soluzione i-TES (PCM)\n"
                 f"**Temp. Stoccaggio:** {t_pcm}°C\n\n"
                 f"**Ingombro Moduli:**\n{ites_dims_str}\n"
@@ -742,57 +801,21 @@ if suggested_tank:
                 f"- Costo Est.: € {hp_ites_price:,.0f}\n"
                 f"---\n"
                 f"### 💰 TOTALE SISTEMA: € {total_system_ites_cost:,.0f}")
-        st.caption("⚠️ Contattare fornitore per conferma")
-                
-    with col_comp2:
-        tech_icon = "🛢️" if not is_sanicube else "🧴"
-        tech_name = "Volano Termico Equivalente" if not is_sanicube else "Daikin Sanicube Equivalente"
-        
-        st.success(f"### {tech_icon} {tech_name}\n"
-                   f"**Temp. Stoccaggio:** {t_water_set}°C (Anti-Legionella)\n\n"
-                   f"**Modello Suggerito:** {suggested_tank['brand']} {suggested_tank['model']}\n\n"
-                   f"**Quantità:** {tank_qty}x ({tank_total_vol} Litri totali)\n\n"
-                   f"**Dimensioni Unit:** Ø {suggested_tank['d']} mm x H {suggested_tank['h']} mm\n\n"
-                   f"**Volume Occupato:** {tank_physical_vol_L:.0f} Litri\n\n"
-                   f"**Costo Volano:** € {tank_total_price:,.0f}\n\n"
-                   f"---\n"
-                   f"**Pompa di Calore Suggerita (T_max > {t_water_set}°C):**\n"
-                   f"{hp_water_sel['brand'] if hp_water_sel else 'N/A'} {hp_water_sel['model'] if hp_water_sel else ''}\n"
-                   f"- Potenza: {hp_water_sel['kw'] if hp_water_sel else '-'} kW\n"
-                   f"- Gas: {hp_water_sel['gas'] if hp_water_sel else '-'}\n"
-                   f"- Max T: {hp_water_sel.get('max_t','-') if hp_water_sel else '-'}°C\n"
-                   f"- Costo Est.: € {hp_water_price:,.0f}\n"
-                   f"---\n"
-                   f"### 💰 TOTALE SISTEMA: € {total_system_water_cost:,.0f}")
-        st.caption("⚠️ Contattare fornitore per conferma")
-        
-        with st.expander("ℹ️ Nota Tecnica: Perché una PdC ad Alta Temperatura?"):
-            st.markdown(f"""
-            Per mantenere il volano a **{t_water_set}°C**, è necessario un generatore capace di raggiungere questa temperatura con un margine operativo adeguato (es. +5°C), per evitare di far lavorare il compressore sempre al limite.
-            """)
-        
-        if is_sanicube:
-             with st.expander("ℹ️ Info Daikin Sanicube"):
-                 st.markdown("""
-                 Il sistema **Daikin Sanicube** utilizza un accumulo di acqua tecnica (non potabile) con produzione istantanea di ACS.
-                 * **Igiene:** Grazie al principio semi-istantaneo, non vi è ristagno di acqua potabile, riducendo drasticamente il rischio Legionella.
-                 * **Materiali:** Costruito in materiale plastico, è esente da corrosione.
-                 * **Drain-Back:** Può essere integrato con sistemi solari a svuotamento.
-                 """)
 
     delta_capex_hp = 0
     if hp_ites_sel and hp_water_sel:
         delta_capex_hp = hp_water_sel['price'] - hp_ites_sel['price']
 
     # --- TABELLA CONFRONTO INGOMBRI ---
-    st.markdown("#### 📏 Confronto Spazi Occupati")
-    col_space1, col_space2 = st.columns(2)
-    saving_vol_L = tank_physical_vol_L - ites_physical_vol_L
-    saving_pct = (saving_vol_L / tank_physical_vol_L * 100) if tank_physical_vol_L > 0 else 0
+    if show_comparison:
+        st.markdown("#### 📏 Confronto Spazi Occupati")
+        col_space1, col_space2 = st.columns(2)
+        saving_vol_L = tank_physical_vol_L - ites_physical_vol_L
+        saving_pct = (saving_vol_L / tank_physical_vol_L * 100) if tank_physical_vol_L > 0 else 0
+        
+        col_space1.metric("Volume Fisico i-TES", f"{ites_physical_vol_L:.0f} L")
+        col_space2.metric(f"Volume Fisico {comp_target}", f"{tank_physical_vol_L:.0f} L", delta=f"-{saving_pct:.0f}% vs i-TES" if saving_pct > 0 else None, delta_color="inverse")
     
-    col_space1.metric("Volume Fisico i-TES", f"{ites_physical_vol_L:.0f} L")
-    col_space2.metric(f"Volume Fisico {comp_target}", f"{tank_physical_vol_L:.0f} L", delta=f"-{saving_pct:.0f}% vs i-TES" if saving_pct > 0 else None, delta_color="inverse")
-
     st.caption(f"*Nota: Il volano termico deve contenere {tank_total_vol:.0f} litri d'acqua a {t_water_set}°C per eguagliare il V40 delle batterie i-TES.*")
 
 st.divider()
@@ -854,12 +877,13 @@ if len(sys_flows) > 0:
         plot_v40_vol = [min(v, display_max_y) for v in sys_v40_volumes]
         fig3.add_trace(go.Scatter(x=sys_flows, y=plot_v40_vol, mode='lines', line=dict(color='#457b9d', width=2), name='i-TES V40', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
         
-        sanicube_v40_curve = [] # Defined here to be used in next chart
-        if is_sanicube:
-            for f in sys_flows:
-                 single_v40 = get_sanicube_v40_at_flow(f / tank_qty, t_water_set) 
-                 sanicube_v40_curve.append(single_v40 * tank_qty)
-            fig3.add_trace(go.Scatter(x=sys_flows, y=sanicube_v40_curve, mode='lines', line=dict(color='#e67e22', width=2, dash='dash'), name='Sanicube V40 (Reale)', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
+        if show_comparison:
+            sanicube_v40_curve = [] 
+            if is_sanicube:
+                for f in sys_flows:
+                     single_v40 = get_sanicube_v40_at_flow(f / tank_qty, t_water_set) 
+                     sanicube_v40_curve.append(single_v40 * tank_qty)
+                fig3.add_trace(go.Scatter(x=sys_flows, y=sanicube_v40_curve, mode='lines', line=dict(color='#e67e22', width=2, dash='dash'), name='Sanicube V40 (Reale)', hovertemplate='Portata: %{x:.1f} L/min<br>Volume: %{y:.0f} L<extra></extra>'))
 
         pt_v40_vis = min(total_v40_liters, display_max_y)
         fig3.add_trace(go.Scatter(x=[qp_lmin_target], y=[pt_v40_vis], mode='markers', marker=dict(color='purple', size=14, line=dict(color='black', width=2)), name='Punto Lavoro'))
@@ -881,22 +905,23 @@ if len(sys_flows) > 0:
             curr_ratio_ites = curr_v40_ites / ites_physical_vol_L
             fig_ratio.add_trace(go.Scatter(x=[qp_lmin_target], y=[curr_ratio_ites], mode='markers', marker=dict(color='#457b9d', size=10), name='Punto Lavoro i-TES'))
         
-        # Tank Ratio
-        if tank_physical_vol_L > 0:
-            if is_sanicube:
-                ratio_tank = [v / tank_physical_vol_L for v in sanicube_v40_curve]
-                fig_ratio.add_trace(go.Scatter(x=sys_flows, y=ratio_tank, mode='lines', line=dict(color='#e67e22', width=2, dash='dash'), name='Sanicube'))
-                
-                # Point
-                curr_v40_sani = np.interp(qp_lmin_target, sys_flows, sanicube_v40_curve)
-                curr_ratio_sani = curr_v40_sani / tank_physical_vol_L
-                fig_ratio.add_trace(go.Scatter(x=[qp_lmin_target], y=[curr_ratio_sani], mode='markers', marker=dict(color='#e67e22', size=10), name='Punto Lavoro Sanicube'))
+        if show_comparison:
+            # Tank Ratio
+            if tank_physical_vol_L > 0:
+                if is_sanicube:
+                    ratio_tank = [v / tank_physical_vol_L for v in sanicube_v40_curve]
+                    fig_ratio.add_trace(go.Scatter(x=sys_flows, y=ratio_tank, mode='lines', line=dict(color='#e67e22', width=2, dash='dash'), name='Sanicube'))
+                    
+                    # Point
+                    curr_v40_sani = np.interp(qp_lmin_target, sys_flows, sanicube_v40_curve)
+                    curr_ratio_sani = curr_v40_sani / tank_physical_vol_L
+                    fig_ratio.add_trace(go.Scatter(x=[qp_lmin_target], y=[curr_ratio_sani], mode='markers', marker=dict(color='#e67e22', size=10), name='Punto Lavoro Sanicube'))
 
-            else:
-                # Generic Tank (Approximation)
-                ratio_val = total_v40_liters / tank_physical_vol_L if tank_physical_vol_L > 0 else 0
-                fig_ratio.add_trace(go.Scatter(x=[sys_flows[0], sys_flows[-1]], y=[ratio_val, ratio_val], mode='lines', line=dict(color='green', width=2, dash='dot'), name='Volano Gen.'))
-                fig_ratio.add_trace(go.Scatter(x=[qp_lmin_target], y=[ratio_val], mode='markers', marker=dict(color='green', size=10), name='Punto Lavoro Volano'))
+                else:
+                    # Generic Tank (Approximation)
+                    ratio_val = total_v40_liters / tank_physical_vol_L if tank_physical_vol_L > 0 else 0
+                    fig_ratio.add_trace(go.Scatter(x=[sys_flows[0], sys_flows[-1]], y=[ratio_val, ratio_val], mode='lines', line=dict(color='green', width=2, dash='dot'), name='Volano Gen.'))
+                    fig_ratio.add_trace(go.Scatter(x=[qp_lmin_target], y=[ratio_val], mode='markers', marker=dict(color='green', size=10), name='Punto Lavoro Volano'))
         
         fig_ratio.update_layout(
             xaxis_title="Portata (L/min)", 
@@ -1074,7 +1099,14 @@ with st.expander("📈 1. Analisi Dettagliata (i-TES)", expanded=True):
     fig_smart.update_yaxes(title_text="Volume Cumulato (L)", row=2, col=1)
     
     st.plotly_chart(fig_smart, use_container_width=True)
-    st.caption(f"Nota: La portata media dell'utenza calcolata è di **{avg_user_flow_lmin:.1f} L/min** (Linea rossa tratteggiata), mentre il picco normativo è **{qp_lmin_target:.1f} L/min**.")
+    
+    daily_vol_tot = sim_people * (50 if sim_type == "Residenziale" else (15 if sim_type == "Ufficio" else 80))
+    st.markdown(f"""
+    **ℹ️ Dettagli Profilo di Prelievo:**
+    * **Normativa di Riferimento (Volume):** Il fabbisogno giornaliero totale (**{daily_vol_tot:.0f} Litri**) è stimato secondo **UNI 9182** (es. 50 L/persona residenziale).
+    * **Profilo Orario (Forma della Curva):** La distribuzione dei prelievi nelle 24 ore (Curva Rossa) si basa su **Profili di Carico Standard (Standard Load Profiles)** utilizzati in ingegneria (es. ASHRAE / UNI TS 11300-2 appendice informativa), simulando i picchi tipici di utilizzo (mattina/sera).
+    * **Picco di Progetto:** La linea tratteggiata nera (**{qp_lmin_target:.1f} L/min**) indica invece la portata di dimensionamento secondo **UNI EN 806-3**, necessaria per garantire la pressione corretta nel caso peggiore (contemporaneità).
+    """)
     
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Energia Totale PdC", f"{total_kwh_used:.1f} kWh/giorno")
@@ -1087,14 +1119,14 @@ with st.expander("📈 1. Analisi Dettagliata (i-TES)", expanded=True):
     kpi4.metric("Cicli ON/OFF", f"{cycle_total}", help="Numero di accensioni giornaliere della Pompa di Calore")
 
 # --- CONFRONTO TECNOLOGICO E TABELLE ---
-with st.expander(f"🆚 2. Confronto Tecnologico (i-TES vs {comp_target})", expanded=True):
+with st.expander(f"🆚 Analisi Economica & Tecnologica", expanded=True):
     # Use global function run_simulation_step_water
     start_v_w = tank_total_vol * 0.8
     start_s_w = False
     
     cost_extra_temp = 0 # Initialize here to be safe
 
-    # Convergence loop
+    # Convergence loop (Water)
     for _ in range(5):
         soc_water, temp_water, end_v_w, end_s_w, kwh_water_therm, cycles_water = run_simulation_step_water(
             start_v_w, start_s_w, tank_total_vol, consumption_curve_min, 
@@ -1116,24 +1148,26 @@ with st.expander(f"🆚 2. Confronto Tecnologico (i-TES vs {comp_target})", expa
 
     soc_pcm, temp_pcm = run_pcm_plot_data(soc_history, func_temp_pcm, t_pcm, t_in, consumption_curve_min)
 
-    fig_comp = make_subplots(
-        rows=2, cols=1, 
-        shared_xaxes=True,
-        vertical_spacing=0.1,
-        row_heights=[0.5, 0.5],
-        subplot_titles=("Stato di Carica (Litri Equivalenti)", "Temperatura Erogazione (°C)")
-    )
-    
-    fig_comp.add_trace(go.Scatter(x=x_time/60, y=soc_pcm, mode='lines', name='Accumulo i-TES (PCM)', line=dict(color='#007acc', width=3)), row=1, col=1)
-    fig_comp.add_trace(go.Scatter(x=x_time/60, y=soc_water, mode='lines', name=f'Accumulo {comp_target}', line=dict(color='#2ca02c', width=2, dash='dot')), row=1, col=1) 
-    fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_pcm, mode='lines', name='Temp. Acqua i-TES (PCM)', line=dict(color='#007acc', width=3)), row=2, col=1)
-    fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_water, mode='lines', name=f'Temp. Istantanea {comp_target}', line=dict(color='#ff7f0e', width=1, dash='dot')), row=2, col=1) 
-    fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_water_ma, mode='lines', name=f'Temp. Media Mobile (60m) {comp_target}', line=dict(color='#d62728', width=2.5)), row=2, col=1)
-    
-    fig_comp.update_layout(title="Confronto Dinamico Completo", height=700)
-    fig_comp.update_yaxes(title_text="Volume (L)", row=1, col=1)
-    fig_comp.update_yaxes(title_text="Temperatura (°C)", row=2, col=1)
-    st.plotly_chart(fig_comp, use_container_width=True)
+    # Comparison Graph
+    if show_comparison:
+        fig_comp = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True,
+            vertical_spacing=0.1,
+            row_heights=[0.5, 0.5],
+            subplot_titles=("Stato di Carica (Litri Equivalenti)", "Temperatura Erogazione (°C)")
+        )
+        
+        fig_comp.add_trace(go.Scatter(x=x_time/60, y=soc_pcm, mode='lines', name='Accumulo i-TES (PCM)', line=dict(color='#007acc', width=3)), row=1, col=1)
+        fig_comp.add_trace(go.Scatter(x=x_time/60, y=soc_water, mode='lines', name=f'Accumulo {comp_target}', line=dict(color='#2ca02c', width=2, dash='dot')), row=1, col=1) 
+        fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_pcm, mode='lines', name='Temp. Acqua i-TES (PCM)', line=dict(color='#007acc', width=3)), row=2, col=1)
+        fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_water, mode='lines', name=f'Temp. Istantanea {comp_target}', line=dict(color='#ff7f0e', width=1, dash='dot')), row=2, col=1) 
+        fig_comp.add_trace(go.Scatter(x=x_time/60, y=temp_water_ma, mode='lines', name=f'Temp. Media Mobile (60m) {comp_target}', line=dict(color='#d62728', width=2.5)), row=2, col=1)
+        
+        fig_comp.update_layout(title="Confronto Dinamico Completo", height=700)
+        fig_comp.update_yaxes(title_text="Volume (L)", row=1, col=1)
+        fig_comp.update_yaxes(title_text="Temperatura (°C)", row=2, col=1)
+        st.plotly_chart(fig_comp, use_container_width=True)
     
     # Calculations for Table
     cop_pcm = estimate_cop(t_pcm)
@@ -1167,138 +1201,153 @@ with st.expander(f"🆚 2. Confronto Tecnologico (i-TES vs {comp_target})", expa
     water_total_annual_cost = water_cost_energy + (cycles_water * 365 * startup_penalty_kwh * elec_price)
     
     st.markdown("### 📊 Dettaglio Consumi Assoluti (Stima Annuale)")
-    consumption_data = {
-        "Metrica": ["Energia Termica (kWh_t)", "Energia Elettrica (kWh_e)", "Costo Elettrico (€)", "Costo Start-up (€)", "Costo Manutenzione (€)"],
-        "i-TES (PCM)": [
-            f"{kwh_pcm*365:,.0f}", 
-            f"{kwh_elec_pcm_year:,.0f}", 
-            f"€ {pcm_cost_energy:,.0f}",
-            f"€ {cycles_pcm * 365 * startup_penalty_kwh * elec_price:,.0f}",
-            "Included"
-        ],
-        f"{comp_target}": [
-            f"{kwh_water_therm*365:,.0f}", 
-            f"{kwh_elec_water_year:,.0f}", 
-            f"€ {water_cost_energy:,.0f}",
-            f"€ {cycles_water * 365 * startup_penalty_kwh * elec_price:,.0f}",
-            f"€ {delta_cycles_year * cost_per_cycle:,.0f} (Extra)"
-        ],
-        "Differenza (Risparmio)": [
-            f"{(kwh_water_therm-kwh_pcm)*365:,.0f}", 
-            f"{(kwh_elec_water_year-kwh_elec_pcm_year):,.0f}", 
-            f"€ {saving_energy_year:,.0f}",
-            f"€ {saving_startup_elec_year:,.0f}",
-            f"€ {saving_maint_year:,.0f}"
-        ]
-    }
+    
+    if show_comparison:
+        consumption_data = {
+            "Metrica": ["Energia Termica (kWh_t)", "Energia Elettrica (kWh_e)", "Costo Elettrico (€)", "Costo Start-up (€)", "Costo Manutenzione (€)"],
+            "i-TES (PCM)": [
+                f"{kwh_pcm*365:,.0f}", 
+                f"{kwh_elec_pcm_year:,.0f}", 
+                f"€ {pcm_cost_energy:,.0f}",
+                f"€ {cycles_pcm * 365 * startup_penalty_kwh * elec_price:,.0f}",
+                "Included"
+            ],
+            f"{comp_target}": [
+                f"{kwh_water_therm*365:,.0f}", 
+                f"{kwh_elec_water_year:,.0f}", 
+                f"€ {water_cost_energy:,.0f}",
+                f"€ {cycles_water * 365 * startup_penalty_kwh * elec_price:,.0f}",
+                f"€ {delta_cycles_year * cost_per_cycle:,.0f} (Extra)"
+            ],
+            "Differenza (Risparmio)": [
+                f"{(kwh_water_therm-kwh_pcm)*365:,.0f}", 
+                f"{(kwh_elec_water_year-kwh_elec_pcm_year):,.0f}", 
+                f"€ {saving_energy_year:,.0f}",
+                f"€ {saving_startup_elec_year:,.0f}",
+                f"€ {saving_maint_year:,.0f}"
+            ]
+        }
+    else:
+        consumption_data = {
+            "Metrica": ["Energia Termica (kWh_t)", "Energia Elettrica (kWh_e)", "Costo Elettrico (€)", "Costo Start-up (€)"],
+            "i-TES (PCM)": [
+                f"{kwh_pcm*365:,.0f}", 
+                f"{kwh_elec_pcm_year:,.0f}", 
+                f"€ {pcm_cost_energy:,.0f}",
+                f"€ {cycles_pcm * 365 * startup_penalty_kwh * elec_price:,.0f}"
+            ]
+        }
+        
     st.table(pd.DataFrame(consumption_data))
     
     # Saving Metrics Display
-    st.markdown("### 💰 Riepilogo Risparmio Economico")
-    col_res1, col_res2, col_res3, col_res4 = st.columns(4)
-    col_res1.metric("Risp. Elettrico (COP & Disp.)", f"€ {saving_energy_year:,.0f}", help="Risparmio dovuto alla miglior efficienza (COP) e minori dispersioni")
-    col_res2.metric("Risp. Elettrico (Start-up)", f"€ {saving_startup_elec_year:,.0f}", help="Energia risparmiata evitando i continui avvii del compressore")
-    col_res3.metric("Risp. Manutenzione (Usura)", f"€ {saving_maint_year:,.0f}", help="Minor usura meccanica dovuta alla riduzione dei cicli")
-    col_res4.metric("TOTALE RISPARMIO ANNUO", f"€ {total_saving_year:,.0f}", delta="Totale", delta_color="normal")
-    
-    with st.expander("ℹ️ Dettaglio Risparmio Elettrico (COP & Disp.)"):
-        st.markdown(f"""
-        Questo risparmio combina due fattori fondamentali:
-        1. **Miglior Efficienza (COP):** La PdC per i-TES lavora a {t_pcm}°C (COP {cop_pcm:.2f}), mentre per il {comp_target} lavora a {t_water_set}°C (COP {cop_water:.2f}).
-        2. **Minori Dispersioni:** Mantenere un volume d'acqua sempre ad alta temperatura comporta maggiori perdite termiche rispetto al PCM.
-
-        **Calcolo:**
-        * **Consumo Elettrico {comp_target}:** {kwh_elec_water_year:,.0f} kWh/anno
-        * **Consumo Elettrico i-TES:** {kwh_elec_pcm_year:,.0f} kWh/anno
-        * **Delta Energia:** {kwh_elec_water_year - kwh_elec_pcm_year:,.0f} kWh
-        * **Risparmio:** {kwh_elec_water_year - kwh_elec_pcm_year:,.0f} kWh × {elec_price} €/kWh = **€ {saving_energy_year:,.0f}**
-        """)
-
-    if cost_extra_temp > 0:
-        with st.expander("ℹ️ Dettaglio Calcolo Penalità COP (Legionella)"):
+    if show_comparison:
+        st.markdown("### 💰 Riepilogo Risparmio Economico")
+        col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+        col_res1.metric("Risp. Elettrico (COP & Disp.)", f"€ {saving_energy_year:,.0f}", help="Risparmio dovuto alla miglior efficienza (COP) e minori dispersioni")
+        col_res2.metric("Risp. Elettrico (Start-up)", f"€ {saving_startup_elec_year:,.0f}", help="Energia risparmiata evitando i continui avvii del compressore")
+        col_res3.metric("Risp. Manutenzione (Usura)", f"€ {saving_maint_year:,.0f}", help="Minor usura meccanica dovuta alla riduzione dei cicli")
+        col_res4.metric("TOTALE RISPARMIO ANNUO", f"€ {total_saving_year:,.0f}", delta="Totale", delta_color="normal")
+        
+        with st.expander("ℹ️ Dettaglio Risparmio Elettrico (COP & Disp.)"):
             st.markdown(f"""
-            Per prevenire la legionella, il volano ad acqua deve essere mantenuto a **{t_water_set:.1f}°C**, mentre la batteria PCM lavora a **{t_pcm}°C**.
-            L'aumento della temperatura di mandata riduce l'efficienza (COP) della Pompa di Calore:
-            
-            1.  **COP a {t_pcm}°C (PCM):** {cop_pcm:.2f}
-            2.  **COP a {t_water_set:.1f}°C (Volano):** {cop_water:.2f} (Penalità: {((cop_pcm-cop_water)/cop_pcm)*100:.1f}%)
-            """)
-            
-    with st.expander("ℹ️ Dettaglio Risparmio Manutenzione (Usura)"):
-        st.markdown(f"""
-        Il risparmio è calcolato sulla riduzione dello stress meccanico del compressore.
-        * **Cicli Annui i-TES:** {cycles_pcm * 365:,.0f}
-        * **Cicli Annui {comp_target}:** {cycles_water * 365:,.0f}
-        * **Differenza:** {delta_cycles_year:,.0f} cicli in meno.
-        """)
+            Questo risparmio combina due fattori fondamentali:
+            1. **Miglior Efficienza (COP):** La PdC per i-TES lavora a {t_pcm}°C (COP {cop_pcm:.2f}), mentre per il {comp_target} lavora a {t_water_set}°C (COP {cop_water:.2f}).
+            2. **Minori Dispersioni:** Mantenere un volume d'acqua sempre ad alta temperatura comporta maggiori perdite termiche rispetto al PCM.
 
-    with st.expander("ℹ️ Dettaglio Risparmio Elettrico (Transitori Start-up)"):
-        st.markdown(f"""
-        Ogni volta che la Pompa di Calore si avvia, necessita di una fase di "ramp-up" a bassa efficienza.
-        * **Penalità Energetica per Avvio:** {startup_penalty_kwh} kWh
-        * **Calcolo:** {delta_cycles_year:,.0f} cicli evitati × {startup_penalty_kwh} kWh/ciclo × {elec_price} €/kWh = **€ {saving_startup_elec_year:,.0f}**
-        """)
+            **Calcolo:**
+            * **Consumo Elettrico {comp_target}:** {kwh_elec_water_year:,.0f} kWh/anno
+            * **Consumo Elettrico i-TES:** {kwh_elec_pcm_year:,.0f} kWh/anno
+            * **Delta Energia:** {kwh_elec_water_year - kwh_elec_pcm_year:,.0f} kWh
+            * **Risparmio:** {kwh_elec_water_year - kwh_elec_pcm_year:,.0f} kWh × {elec_price} €/kWh = **€ {saving_energy_year:,.0f}**
+            """)
+
+        if cost_extra_temp > 0:
+            with st.expander("ℹ️ Dettaglio Calcolo Penalità COP (Legionella)"):
+                st.markdown(f"""
+                Per prevenire la legionella, il volano ad acqua deve essere mantenuto a **{t_water_set:.1f}°C**, mentre la batteria PCM lavora a **{t_pcm}°C**.
+                L'aumento della temperatura di mandata riduce l'efficienza (COP) della Pompa di Calore:
+                
+                1.  **COP a {t_pcm}°C (PCM):** {cop_pcm:.2f}
+                2.  **COP a {t_water_set:.1f}°C (Volano):** {cop_water:.2f} (Penalità: {((cop_pcm-cop_water)/cop_pcm)*100:.1f}%)
+                """)
+                
+        with st.expander("ℹ️ Dettaglio Risparmio Manutenzione (Usura)"):
+            st.markdown(f"""
+            Il risparmio è calcolato sulla riduzione dello stress meccanico del compressore.
+            * **Cicli Annui i-TES:** {cycles_pcm * 365:,.0f}
+            * **Cicli Annui {comp_target}:** {cycles_water * 365:,.0f}
+            * **Differenza:** {delta_cycles_year:,.0f} cicli in meno.
+            """)
+
+        with st.expander("ℹ️ Dettaglio Risparmio Elettrico (Transitori Start-up)"):
+            st.markdown(f"""
+            Ogni volta che la Pompa di Calore si avvia, necessita di una fase di "ramp-up" a bassa efficienza.
+            * **Penalità Energetica per Avvio:** {startup_penalty_kwh} kWh
+            * **Calcolo:** {delta_cycles_year:,.0f} cicli evitati × {startup_penalty_kwh} kWh/ciclo × {elec_price} €/kWh = **€ {saving_startup_elec_year:,.0f}**
+            """)
 
     st.caption(f"**Fonte Prezzo Energia:** Stima basata su dati ARERA (~0.31 €/kWh).")
 
     # --- ANALISI BREAK-EVEN (ROI) ---
-    st.markdown("### 💸 Analisi di Break-even (ROI)")
-    
-    delta_investment = total_system_ites_cost - total_system_water_cost
-    
-    if delta_investment <= 0:
-        st.success(f"✅ **L'investimento i-TES è più economico o uguale.**\n\nRisparmio immediato all'acquisto: **€ {-delta_investment:,.0f}**\nOltre a un risparmio operativo annuo di **€ {total_saving_year:,.0f}**.")
-    elif total_saving_year <= 0:
-        st.error(f"❌ **Il sistema i-TES costa di più (€ {delta_investment:,.0f}) e non genera risparmio operativo in queste condizioni.**\nVerificare i parametri (es. costo energia, temperature).")
-    else:
-        years = 15
-        x_years = list(range(years + 1))
+    if show_comparison:
+        st.markdown("### 💸 Analisi di Break-even (ROI)")
         
-        # Cumulative Cash Flow (Net Benefit Approach)
-        # Year 0: -Delta Investment
-        # Year N: Previous + Annual Saving
-        cash_flow = []
-        curr = -delta_investment
-        for y in x_years:
-            cash_flow.append(curr)
-            curr += total_saving_year
+        delta_investment = total_system_ites_cost - total_system_water_cost
         
-        # Create Plot
-        fig_roi = go.Figure()
-        
-        # Line 1: Net Cumulative Savings
-        fig_roi.add_trace(go.Scatter(
-            x=x_years, 
-            y=cash_flow, 
-            mode='lines+markers', 
-            name='Flusso di Cassa Cumulato',
-            line=dict(color='green', width=3),
-            fill='tozeroy',
-            fillcolor='rgba(0, 255, 0, 0.1)' # Light green area below
-        ))
-        
-        # Zero Line (Break-even)
-        fig_roi.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Break-even Point")
-        
-        fig_roi.update_layout(
-            title="Rientro dell'Investimento (Differenziale)",
-            xaxis_title="Anni",
-            yaxis_title="Bilancio Economico (€)",
-            height=400,
-            showlegend=True
-        )
-        
-        st.plotly_chart(fig_roi, use_container_width=True)
-        
-        roi_years = delta_investment / total_saving_year
-        st.metric("Tempo di Ritorno (Payback)", f"{roi_years:.1f} Anni", help="Tempo necessario affinché i risparmi operativi coprano il maggior costo iniziale.")
-        
-        if roi_years < 5:
-            st.success(f"🚀 **Ottimo investimento!** Il sistema si ripaga in soli {roi_years:.1f} anni.")
-        elif roi_years < 10:
-            st.warning(f"⚠️ **Investimento a medio termine.** Rientro in {roi_years:.1f} anni.")
+        if delta_investment <= 0:
+            st.success(f"✅ **L'investimento i-TES è più economico o uguale.**\n\nRisparmio immediato all'acquisto: **€ {-delta_investment:,.0f}**\nOltre a un risparmio operativo annuo di **€ {total_saving_year:,.0f}**.")
+        elif total_saving_year <= 0:
+            st.error(f"❌ **Il sistema i-TES costa di più (€ {delta_investment:,.0f}) e non genera risparmio operativo in queste condizioni.**\nVerificare i parametri (es. costo energia, temperature).")
         else:
-            st.info(f"ℹ️ **Investimento a lungo termine.** Rientro in {roi_years:.1f} anni.")
+            years = 15
+            x_years = list(range(years + 1))
+            
+            # Cumulative Cash Flow (Net Benefit Approach)
+            # Year 0: -Delta Investment
+            # Year N: Previous + Annual Saving
+            cash_flow = []
+            curr = -delta_investment
+            for y in x_years:
+                cash_flow.append(curr)
+                curr += total_saving_year
+            
+            # Create Plot
+            fig_roi = go.Figure()
+            
+            # Line 1: Net Cumulative Savings
+            fig_roi.add_trace(go.Scatter(
+                x=x_years, 
+                y=cash_flow, 
+                mode='lines+markers', 
+                name='Flusso di Cassa Cumulato',
+                line=dict(color='green', width=3),
+                fill='tozeroy',
+                fillcolor='rgba(0, 255, 0, 0.1)' # Light green area below
+            ))
+            
+            # Zero Line (Break-even)
+            fig_roi.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Break-even Point")
+            
+            fig_roi.update_layout(
+                title="Rientro dell'Investimento (Differenziale)",
+                xaxis_title="Anni",
+                yaxis_title="Bilancio Economico (€)",
+                height=400,
+                showlegend=True
+            )
+            
+            st.plotly_chart(fig_roi, use_container_width=True)
+            
+            roi_years = delta_investment / total_saving_year
+            st.metric("Tempo di Ritorno (Payback)", f"{roi_years:.1f} Anni", help="Tempo necessario affinché i risparmi operativi coprano il maggior costo iniziale.")
+            
+            if roi_years < 5:
+                st.success(f"🚀 **Ottimo investimento!** Il sistema si ripaga in soli {roi_years:.1f} anni.")
+            elif roi_years < 10:
+                st.warning(f"⚠️ **Investimento a medio termine.** Rientro in {roi_years:.1f} anni.")
+            else:
+                st.info(f"ℹ️ **Investimento a lungo termine.** Rientro in {roi_years:.1f} anni.")
 
 # --- GRAFICO EN 806 ---
 with st.expander("📉 Vedi Grafico Normativo EN 806-3", expanded=False):
