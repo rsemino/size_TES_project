@@ -9,29 +9,44 @@ import itertools
 from scipy import interpolate
 import requests
 from datetime import datetime
+import time
 
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Simulatore i-TES Pro", layout="wide")
 st.title("🚰 Simulatore i-TES: Site-Specific & Confronto Tecnologico")
 
-# --- GESTIONE STATO ---
+# --- GESTIONE STATO INIZIALE ---
 if 'qty_6' not in st.session_state: st.session_state.qty_6 = 0
 if 'qty_12' not in st.session_state: st.session_state.qty_12 = 0
 if 'qty_20' not in st.session_state: st.session_state.qty_20 = 0
 if 'qty_40' not in st.session_state: st.session_state.qty_40 = 0
-if 'lat' not in st.session_state: st.session_state.lat = 41.9028 # Default Roma
+if 'lat' not in st.session_state: st.session_state.lat = 41.9028 
 if 'lon' not in st.session_state: st.session_state.lon = 12.4964
 if 'address_found' not in st.session_state: st.session_state.address_found = "Roma, Italia (Default)"
 
-# Inizializzazione Slider Strategie
+# Inizializzazione Strategie
 if 'pv_start_sun' not in st.session_state: st.session_state.pv_start_sun = 50
 if 'pv_start_night' not in st.session_state: st.session_state.pv_start_night = 15
 if 'pv_stop' not in st.session_state: st.session_state.pv_stop = 100
 if 'std_start' not in st.session_state: st.session_state.std_start = 70
 if 'std_stop' not in st.session_state: st.session_state.std_stop = 98
+if 'recharge_min' not in st.session_state: st.session_state.recharge_min = 60
+if 'flow_correction_pct' not in st.session_state: st.session_state.flow_correction_pct = 0
+
+# --- APPLY PENDING UPDATES ---
+if 'pending_opt' in st.session_state:
+    opt = st.session_state.pop('pending_opt')
+    st.session_state.qty_6 = opt['q6']
+    st.session_state.qty_12 = opt['q12']
+    st.session_state.qty_20 = opt['q20']
+    st.session_state.qty_40 = opt['q40']
+    st.session_state.recharge_min = opt['rt']
+    st.session_state.std_start = opt['start']
+    st.session_state.std_stop = opt['stop']
+    st.toast("🏆 Configurazione Ottimale Applicata!", icon="✅")
 
 # ==========================================
-#  SEZIONE FUNZIONI (DEFINITE GLOBALMENTE)
+#  SEZIONE FUNZIONI
 # ==========================================
 
 def manage_qty(key_name, label):
@@ -97,10 +112,13 @@ def calcola_qd_en806(total_lu, max_single_lu):
         m = 0 if x2 == x1 else (y2 - y1) / (x2 - x1)
         return math.exp(y1 + m * (math.log(total_lu) - x1))
 
-def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
+def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0, flow_correction_pct=0):
     interpolators_p = {}
     interpolators_t = {}
     limits = {}
+    
+    correction_factor = 1 + (flow_correction_pct / 100.0)
+    
     for qty, size in config:
         if qty > 0:
             raw = CURVES_DB[size][t_pcm]
@@ -111,27 +129,40 @@ def get_system_curves(config, t_pcm, dt_calc, p_hp_tot, e_tot_e0):
             interpolators_p[size] = interpolate.interp1d(flows, powers, kind='linear', fill_value="extrapolate")
             interpolators_t[size] = interpolate.interp1d(flows, temps, kind='linear', fill_value="extrapolate")
     if not interpolators_p: return [], [], [], []
+    
     alpha_values = np.linspace(0.01, 1.1, 50) 
     sys_flows, sys_powers, sys_temps, sys_v40_volumes = [], [], [], []
+    
     for alpha in alpha_values:
         f_tot, p_tot_batt, weighted_temp_sum = 0, 0, 0
         for qty, size in config:
             if qty > 0:
-                f_single = limits[size] * alpha
-                p_single = float(interpolators_p[size](f_single))
-                t_single = float(interpolators_t[size](f_single))
-                f_block = f_single * qty
+                # Applichiamo la correzione alla portata del singolo modulo
+                f_single_nominal = limits[size] * alpha
+                f_single_corrected = f_single_nominal * correction_factor
+                
+                # Le prestazioni (P e T) sono legate alla portata "fisica" che attraversa lo scambiatore.
+                # Se "correggiamo" la portata, stiamo dicendo che a parità di condizioni la batteria accetta più/meno flusso.
+                # Per calcolare P e T usiamo la portata NON corretta (la curva di base), ma associamo il risultato alla portata CORRETTA.
+                p_single = float(interpolators_p[size](f_single_nominal))
+                t_single = float(interpolators_t[size](f_single_nominal))
+                
+                f_block = f_single_corrected * qty
                 f_tot += f_block
                 p_tot_batt += (p_single * qty)
                 weighted_temp_sum += (t_single * f_block)
+        
         sys_flows.append(f_tot)
         sys_powers.append(p_tot_batt)
         t_mix = weighted_temp_sum / f_tot if f_tot > 0 else 0
         sys_temps.append(t_mix)
+        
+        # Calcolo V40 basato sul deficit
         p_req_at_flow = f_tot * dt_calc * 0.0697
         p_deficit = p_req_at_flow - p_hp_tot
         v40_vol = (e_tot_e0 / p_deficit) * 60 * f_tot if p_deficit > 0 else 99999 
         sys_v40_volumes.append(v40_vol)
+        
     return sys_flows, sys_powers, sys_temps, sys_v40_volumes
 
 def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
@@ -396,11 +427,16 @@ if is_sanicube:
 
 # --- SEZIONE INPUT UTENTE (Sidebar) ---
 st.sidebar.header("Parametri Progetto")
+# 1. PROFILE INPUTS FIRST (Fix NameError)
+with st.sidebar.expander("1. Profilo Utenza", expanded=True):
+    sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
+    sim_type = st.selectbox("Tipo Edificio", ["Residenziale", "Ufficio", "Hotel"])
+
 t_in = st.sidebar.number_input("Temp. Acqua Rete (°C)", value=12.5, step=0.5, format="%.1f")
 dt_target = 40.0 - t_in
 if dt_target <= 0: dt_target = 27.5
 
-with st.sidebar.expander("🏗️ 1. Utenze (LU)", expanded=False):
+with st.sidebar.expander("🏗️ 2. Dettaglio Utenze (LU)", expanded=False):
     inputs = {}
     inputs['LU1'] = {'qty': st.number_input("Lavabo (1 LU)", 0, value=0), 'val': 1}
     inputs['LU2'] = {'qty': st.number_input("Doccia (2 LU)", 0, value=2), 'val': 2}
@@ -417,10 +453,11 @@ with st.sidebar.expander("🏗️ 1. Utenze (LU)", expanded=False):
     qp_lmin_target = qd_ls_target * 60 
     st.info(f"Target (EN 806): **{qp_lmin_target:.1f} L/min**")
 
-st.sidebar.subheader("🔥 2. Generazione")
-recharge_min = st.sidebar.number_input("Tempo Reintegro Target (min)", value=60, step=10, min_value=1)
+st.sidebar.subheader("🔥 3. Generazione")
+recharge_min = st.sidebar.number_input("Tempo Reintegro Target (min)", step=10, min_value=1, key="recharge_min")
 
-with st.sidebar.expander("🔋 3. Batterie", expanded=True):
+with st.sidebar.expander("🔋 4. Batterie i-TES", expanded=True):
+    # BATTERY CONTROLS (ALWAYS VISIBLE - HYBRID MODE)
     manage_qty('qty_6', "i-6")
     st.divider()
     manage_qty('qty_12', "i-12")
@@ -428,36 +465,114 @@ with st.sidebar.expander("🔋 3. Batterie", expanded=True):
     manage_qty('qty_20', "i-20")
     st.divider()
     manage_qty('qty_40', "i-40")
-    st.markdown("---")
-    t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True)
-
-    # --- OTTIMIZZATORE ---
-    st.markdown("### 🛠️ Ottimizzatore")
-    flow_correction_pct = st.number_input("Coeff. Correzione Portata (%)", value=0, step=1)
     
-    if st.button("🚀 OTTIMIZZA (Min. Batterie)"):
-        st.toast("Ricerca configurazione...", icon="⏳")
-        req_flow = qp_lmin_target
-        best_count = float('inf'); best_cost = float('inf'); best_cfg = None
-        max_search = 6
-        for q40, q20, q12, q6 in itertools.product(range(max_search), range(max_search), range(max_search), range(max_search)):
-            if q40==0 and q20==0 and q12==0 and q6==0: continue
-            nom_flow_tot = (q6 * NOMINAL_FLOWS[6]) + (q12 * NOMINAL_FLOWS[12]) + (q20 * NOMINAL_FLOWS[20]) + (q40 * NOMINAL_FLOWS[40])
-            effective_flow = nom_flow_tot * (1 + flow_correction_pct / 100.0)
-            if effective_flow >= req_flow:
-                curr_count = q6 + q12 + q20 + q40
-                curr_cost = (q6*prices[6]) + (q12*prices[12]) + (q20*prices[20]) + (q40*prices[40])
-                if curr_count < best_count:
-                    best_count = curr_count; best_cost = curr_cost; best_cfg = (q6, q12, q20, q40)
-                elif curr_count == best_count:
-                    if curr_cost < best_cost: best_cost = curr_cost; best_cfg = (q6, q12, q20, q40)
-        if best_cfg:
-            st.session_state.qty_6, st.session_state.qty_12 = best_cfg[0], best_cfg[1]
-            st.session_state.qty_20, st.session_state.qty_40 = best_cfg[2], best_cfg[3]
-            st.success(f"Trovato: {sum(best_cfg)} Batterie (Cost: €{best_cost:,.0f})")
-            st.rerun()
-        else:
-            st.error("Nessuna combinazione trovata.")
+    st.markdown("---")
+    
+    # FLOW CORRECTION (ALWAYS VISIBLE)
+    flow_correction_pct = st.number_input("Coeff. Correzione Portata (%)", step=1, key="flow_correction_pct")
+
+    # AUTOPILOT TOGGLE
+    st.divider()
+    enable_autopilot = st.toggle("🤖 Attiva Modalità Autopilota (Ottimizzazione)", value=False)
+    
+    if enable_autopilot:
+        st.info("💡 L'Autopilota cercherà la combinazione migliore di batterie, ricarica e soglie per massimizzare il ROI.")
+        
+        if st.button("🚀 TROVA CONFIGURAZIONE OTTIMALE"):
+            with st.status("Analisi in corso...", expanded=True) as status:
+                st.write("🔍 Fase 1: Esplorazione configurazioni hardware...")
+                
+                req_flow = qp_lmin_target
+                valid_hardware = []
+                
+                for q40, q20, q12, q6 in itertools.product(range(5), range(5), range(5), range(5)):
+                    if q40==0 and q20==0 and q12==0 and q6==0: continue
+                    nom_flow_tot = (q6 * NOMINAL_FLOWS[6]) + (q12 * NOMINAL_FLOWS[12]) + (q20 * NOMINAL_FLOWS[20]) + (q40 * NOMINAL_FLOWS[40])
+                    effective_flow = nom_flow_tot * (1 + st.session_state.flow_correction_pct / 100.0)
+                    if effective_flow >= req_flow:
+                        hw_cost = (q6*prices[6]) + (q12*prices[12]) + (q20*prices[20]) + (q40*prices[40])
+                        valid_hardware.append({'cfg': (q6, q12, q20, q40), 'cost': hw_cost})
+                
+                valid_hardware.sort(key=lambda x: x['cost'])
+                candidates = valid_hardware[:3]
+                st.write(f"✅ Trovate {len(valid_hardware)} opzioni. Simulo le migliori...")
+                
+                best_solution = None
+                _, hourly_flow_opt, _ = get_daily_profile_curve(sim_people, sim_type)
+                x_time_opt = np.arange(1440)
+                flow_list_opt = list(hourly_flow_opt) + [hourly_flow_opt[0]]
+                x_h_opt = np.linspace(0, 1440, len(flow_list_opt))
+                f_int_opt = interpolate.interp1d(x_h_opt, flow_list_opt, kind='linear')
+                cons_curve_opt = f_int_opt(x_time_opt)
+
+                recharge_times = [60, 90, 120]
+                start_socs = [30, 50, 70]
+                stop_socs = [90, 100]
+
+                for hw in candidates:
+                    q6, q12, q20, q40 = hw['cfg']
+                    e_tot = 0
+                    for q, s in zip([q6, q12, q20, q40], [6, 12, 20, 40]):
+                        v0 = params_v40[s]['V0']
+                        # Assuming t_pcm from state, careful if not set yet, use default
+                        t_pcm_val = st.session_state.get('t_pcm_radio', 58) 
+                        if t_pcm_val >= 58: v0 /= 0.76
+                        e_tot += (v0 * 4.186 * dt_target) / 3600.0 * q
+                    
+                    for rt in recharge_times:
+                        p_hp = e_tot / (rt/60.0)
+                        hp_cost = 0
+                        hp_sel = get_suggested_hp(p_hp, t_pcm_val)
+                        if hp_sel: hp_cost = hp_sel[0]['price']
+                        ites_capex = hw['cost'] + hp_cost
+                        
+                        for start_s in start_socs:
+                            for stop_s in stop_socs:
+                                kwh_to_v40 = (3600) / (4.186 * dt_target)
+                                tank_cap_v40 = e_tot * kwh_to_v40
+                                hp_flow_v40 = (p_hp * 60) / (4.186 * dt_target)
+                                curr_v = tank_cap_v40 * 0.5
+                                is_on = False
+                                min_soc = tank_cap_v40
+                                kwh_cons = 0
+                                st_th = tank_cap_v40 * (start_s/100.0)
+                                sp_th = tank_cap_v40 * (stop_s/100.0)
+                                
+                                for _ in range(1440):
+                                    cons = cons_curve_opt[_]
+                                    if not is_on:
+                                        if curr_v < st_th: is_on = True
+                                    else:
+                                        if curr_v >= sp_th: is_on = False
+                                    prod = hp_flow_v40 if is_on else 0
+                                    if is_on: kwh_cons += (p_hp / 60.0)
+                                    curr_v = curr_v - cons + prod
+                                    if curr_v > tank_cap_v40: curr_v = tank_cap_v40
+                                    if curr_v < 0: curr_v = 0
+                                    if curr_v < min_soc: min_soc = curr_v
+                                
+                                if min_soc > 0:
+                                    cop = estimate_cop(t_pcm_val)
+                                    opex = (kwh_cons / cop) * 365 * 0.31
+                                    tco = ites_capex + (opex * 15)
+                                    if best_solution is None or tco < best_solution['tco']:
+                                        best_solution = {'tco':tco, 'cfg':hw['cfg'], 'rt':rt, 'start':start_s, 'stop':stop_s}
+                
+                status.update(label="Ottimizzazione completata!", state="complete", expanded=False)
+                
+                if best_solution:
+                    st.session_state['pending_opt'] = {
+                        'q6': best_solution['cfg'][0], 'q12': best_solution['cfg'][1],
+                        'q20': best_solution['cfg'][2], 'q40': best_solution['cfg'][3],
+                        'rt': best_solution['rt'], 'start': best_solution['start'], 'stop': best_solution['stop']
+                    }
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error("Nessuna soluzione valida trovata.")
+
+    st.markdown("---")
+    t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True, key="t_pcm_radio")
 
 # --- CALCOLI PRINCIPALI ---
 # Ora che t_pcm è stato definito nella sidebar, possiamo usarlo
@@ -472,7 +587,7 @@ for qty, size in config:
     e0_single = (v0_nominal * 4.186 * dt_target) / 3600.0
     total_energy_e0 += (e0_single * qty)
 
-recharge_hours = recharge_min / 60.0
+recharge_hours = st.session_state.recharge_min / 60.0
 p_hp_tot_input = total_energy_e0 / recharge_hours if recharge_hours > 0 and total_energy_e0 > 0 else 0.0
 
 p_load = qp_lmin_target * dt_target * 0.0697
@@ -506,10 +621,7 @@ else:
     cost_tooltip = "Nessuna batteria selezionata"
 
 # --- SIMULAZIONE 24H INPUTS ---
-with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
-    sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
-    sim_type = st.selectbox("Tipo Edificio", ["Residenziale", "Ufficio", "Hotel"])
-    
+with st.sidebar.expander("📈 Strategia 24h & PV", expanded=True):
     st.markdown("---")
     is_pv_mode = st.toggle("☀️ Attiva Autoconsumo Fotovoltaico", value=False)
     
@@ -549,56 +661,6 @@ with st.sidebar.expander("📈 Simulazione 24h & PV", expanded=True):
         st.text(f"Avvio Notturno: < {st.session_state.pv_start_night}%")
     else:
         st.markdown("**Soglie Intervento (%)**")
-        if st.button("✨ Ottimizza Soglie (Min. Energia)"):
-            best_kwh = float('inf')
-            best_start = 70
-            best_stop = 98
-            tank_cap_opt = total_energy_e0 / (4.186 * dt_target) * 3600.0 if dt_target > 0 else 999
-            if net_power_deficit > 0.1: tank_cap_opt = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
-            hp_flow_opt = (p_hp_tot_input * 60) / (4.186 * dt_target) if dt_target > 0 else 0
-            _, hourly_flow_opt, _ = get_daily_profile_curve(sim_people, sim_type)
-            flow_list_opt = list(hourly_flow_opt)
-            y_f_opt = flow_list_opt + [flow_list_opt[0]]
-            x_h_opt = np.linspace(0, 1440, len(y_f_opt))
-            f_int = interpolate.interp1d(x_h_opt, y_f_opt, kind='linear')
-            cons_curve_opt = f_int(np.arange(1440))
-            for start_test in range(10, 90, 10):
-                for stop_test in range(start_test + 10, 101, 10):
-                    curr_v = tank_cap_opt * 0.5
-                    is_on = False
-                    for _ in range(1440): # Warmup
-                        st_th = tank_cap_opt * (start_test/100.0); sp_th = tank_cap_opt * (stop_test/100.0)
-                        cons = cons_curve_opt[_]
-                        if not is_on: 
-                            if curr_v < st_th: is_on = True
-                        else:
-                            if curr_v >= sp_th: is_on = False
-                        prod = hp_flow_opt if is_on else 0
-                        curr_v = curr_v - cons + prod
-                        if curr_v > tank_cap_opt: curr_v = tank_cap_opt
-                        if curr_v < 0: curr_v = 0
-                    kwh_run = 0
-                    min_soc = tank_cap_opt
-                    for i in range(1440):
-                        st_th = tank_cap_opt * (start_test/100.0); sp_th = tank_cap_opt * (stop_test/100.0)
-                        cons = cons_curve_opt[i]
-                        if not is_on: 
-                            if curr_v < st_th: is_on = True
-                        else:
-                            if curr_v >= sp_th: is_on = False
-                        prod = hp_flow_opt if is_on else 0
-                        if is_on: kwh_run += (p_hp_tot_input / 60.0)
-                        curr_v = curr_v - cons + prod
-                        if curr_v > tank_cap_opt: curr_v = tank_cap_opt
-                        if curr_v < 0: curr_v = 0
-                        if curr_v < min_soc: min_soc = curr_v
-                    if min_soc > 0: 
-                        if kwh_run < best_kwh:
-                            best_kwh = kwh_run; best_start = start_test; best_stop = stop_test
-            st.session_state.std_start = best_start
-            st.session_state.std_stop = best_stop
-            st.rerun()
-
         start_soc_std = st.slider("Avvio Reintegro se carica < (%)", 0, 100, key='std_start')
         stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, key='std_stop')
 
@@ -736,7 +798,7 @@ if suggested_tank:
 st.divider()
 
 # --- GRAFICI INTERATTIVI ---
-sys_flows, sys_powers, sys_temps, sys_v40_volumes = get_system_curves(config, t_pcm, dt_target, p_hp_tot_input, total_energy_e0)
+sys_flows, sys_powers, sys_temps, sys_v40_volumes = get_system_curves(config, t_pcm, dt_target, p_hp_tot_input, total_energy_e0, st.session_state.flow_correction_pct)
 
 # FUNZIONE PER LE CURVE REALI SANICUBE (V40)
 def get_sanicube_v40_at_flow(flow_lmin, t_store):
