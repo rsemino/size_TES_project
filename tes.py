@@ -14,8 +14,7 @@ import time
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Simulatore i-TES Pro", layout="wide")
 
-# Creiamo un "contenitore vuoto" in cima alla pagina. Lo riempiremo con il titolo 
-# corretto più avanti nel codice, dopo aver letto gli input della Sidebar.
+# Placeholder per il titolo dinamico con logo
 title_placeholder = st.empty() 
 
 # --- GESTIONE STATO INIZIALE ---
@@ -167,12 +166,17 @@ def get_daily_profile_curve(n_people=4, building_type="Residenziale"):
     liters_per_person = 50 
     if building_type == "Ufficio": liters_per_person = 15
     elif building_type == "Hotel": liters_per_person = 80
+    elif building_type == "Industria (2 Turni)": liters_per_person = 40
+    elif building_type == "Industria (3 Turni)": liters_per_person = 40
+    
     total_daily_vol = n_people * liters_per_person
     
     profiles = {
         "Residenziale": [0.5, 0.2, 0.1, 0.1, 0.5, 2.0, 8.0, 12.0, 9.0, 6.0, 5.0, 4.0, 5.0, 4.0, 3.0, 3.0, 4.0, 6.0, 10.0, 11.0, 5.0, 2.0, 1.0, 0.6],
         "Ufficio":      [0, 0, 0, 0, 0, 0, 2, 8, 15, 12, 10, 15, 12, 10, 8, 5, 3, 0, 0, 0, 0, 0, 0, 0],
-        "Hotel":        [1, 0.5, 0.5, 0.5, 1, 3, 10, 15, 12, 8, 5, 4, 3, 3, 4, 6, 8, 12, 8, 5, 3, 2, 1]
+        "Hotel":        [1, 0.5, 0.5, 0.5, 1, 3, 10, 15, 12, 8, 5, 4, 3, 3, 4, 6, 8, 12, 8, 5, 3, 2, 1],
+        "Industria (2 Turni)": [1, 1, 1, 1, 1, 15, 20, 15, 1, 1, 1, 1, 1, 15, 20, 15, 1, 1, 1, 1, 1, 1, 1, 1],
+        "Industria (3 Turni)": [1, 1, 1, 1, 1, 10, 15, 10, 1, 1, 1, 1, 10, 15, 10, 1, 1, 1, 10, 15, 10, 1, 1, 1]
     }
     selected_profile = profiles.get(building_type, profiles["Residenziale"])
     factor = 100.0 / sum(selected_profile)
@@ -286,6 +290,7 @@ def run_simulation_step_water(start_vol, start_hp_state, water_tank_vol_total, c
     temp_erogazione_hist = []
     temp_accumulo_hist = []
     tot_kwh = 0
+    tot_loss_kwh = 0
     cycle_count = 0
     sim_minutes = len(consumption_curve_min)
     
@@ -298,6 +303,7 @@ def run_simulation_step_water(start_vol, start_hp_state, water_tank_vol_total, c
             curr_temp_accumulo = t_water_set
             
         loss_kwh = calc_dispersion_kwh(water_tank_vol_total, curr_temp_accumulo, 20.0, use_sanicube_data=is_sanicube)
+        tot_loss_kwh += loss_kwh
         delta_T_sys = t_water_set - t_return
         loss_liters = 0
         if delta_T_sys > 0:
@@ -325,19 +331,23 @@ def run_simulation_step_water(start_vol, start_hp_state, water_tank_vol_total, c
         temp_erogazione_hist.append(40.0 if curr_v > 0 and consumption_curve_min[i] > 0 else t_water_set) 
         temp_accumulo_hist.append(curr_temp_accumulo)
         
-    return soc_hist, temp_erogazione_hist, temp_accumulo_hist, curr_v, is_hp_on, tot_kwh, cycle_count
+    return soc_hist, temp_erogazione_hist, temp_accumulo_hist, curr_v, is_hp_on, tot_kwh, cycle_count, tot_loss_kwh
 
-def get_suggested_hp(target_kw, target_temp):
-    if target_kw <= 0: return []
-    valid_hps = []
-    search_min = target_kw * 0.8
-    limit_upper = target_kw * 2.5 
-    for hp in HP_DATABASE:
-        if search_min <= hp['kw'] < limit_upper:
-             if hp.get('max_t', 55) >= target_temp:
-                 valid_hps.append(hp)
-    valid_hps.sort(key=lambda x: x.get('price', float('inf')))
-    return valid_hps
+def get_suggested_generator(target_kw, target_temp, gen_type="Pompa di Calore"):
+    if target_kw <= 0: return None
+    db = HP_DATABASE if gen_type == "Pompa di Calore" else BOILER_DATABASE
+    valid_gens = [g for g in db if g.get('max_t', 55) >= target_temp]
+    if not valid_gens: return None
+    
+    valid_gens.sort(key=lambda x: x['kw'])
+    
+    for g in valid_gens:
+        if g['kw'] >= target_kw * 0.9: 
+            return {"qty": 1, "gen": g}
+            
+    largest = valid_gens[-1]
+    qty = math.ceil(target_kw / largest['kw'])
+    return {"qty": qty, "gen": largest}
 
 def get_sanicube_v40_at_flow(flow_lmin, t_store):
     data_500 = {
@@ -439,6 +449,16 @@ HP_DATABASE = [
     {"brand": "Swegon", "model": "BlueBox Zeta Rev", "type": "Aria/Acqua", "kw": 150.0, "gas": "R290", "max_t": 70, "price": 65000},
 ]
 
+BOILER_DATABASE = [
+    {"brand": "Elco", "model": "Thision L Plus 60", "type": "Caldaia a Condensazione", "kw": 56.9, "gas": "Metano/H2", "max_t": 85, "price": 4500},
+    {"brand": "Elco", "model": "Thision L Plus 70", "type": "Caldaia a Condensazione", "kw": 65.4, "gas": "Metano/H2", "max_t": 85, "price": 5000},
+    {"brand": "Elco", "model": "Thision L Plus 100", "type": "Caldaia a Condensazione", "kw": 90.2, "gas": "Metano/H2", "max_t": 85, "price": 6500},
+    {"brand": "Elco", "model": "Thision L Plus 120", "type": "Caldaia a Condensazione", "kw": 110.8, "gas": "Metano/H2", "max_t": 85, "price": 7500},
+    {"brand": "Elco", "model": "Thision L Plus 140", "type": "Caldaia a Condensazione", "kw": 130.5, "gas": "Metano/H2", "max_t": 85, "price": 8500},
+    {"brand": "Elco", "model": "Thision L Plus 170", "type": "Caldaia a Condensazione", "kw": 155.5, "gas": "Metano/H2", "max_t": 85, "price": 9500},
+    {"brand": "Elco", "model": "Thision L Plus 200", "type": "Caldaia a Condensazione", "kw": 180.3, "gas": "Metano/H2", "max_t": 85, "price": 10500},
+]
+
 BUFFER_TANK_DB_GENERIC = [
     {"brand": "Cordivari", "model": "Volano Termico", "vol": 300, "h": 1600, "d": 650, "price": 900},
     {"brand": "Cordivari", "model": "Volano Termico", "vol": 500, "h": 1700, "d": 750, "price": 1200},
@@ -477,7 +497,9 @@ else:
 st.sidebar.header("Parametri Progetto")
 with st.sidebar.expander("1. Profilo Utenza", expanded=True):
     sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
-    sim_type = st.selectbox("Tipo Edificio", ["Residenziale", "Ufficio", "Hotel"])
+    sim_type = st.selectbox("Tipo Edificio", ["Residenziale", "Ufficio", "Hotel", "Industria (2 Turni)", "Industria (3 Turni)"])
+    
+is_industrial = sim_type in ["Industria (2 Turni)", "Industria (3 Turni)"]
 
 t_in = st.sidebar.number_input("Temp. Acqua Rete (°C)", value=12.5, step=0.5, format="%.1f")
 dt_target = 40.0 - t_in
@@ -498,235 +520,26 @@ with st.sidebar.expander("🏗️ 2. Dettaglio Utenze (LU)", expanded=False):
     
     qd_ls_target = calcola_qd_en806(lu_totali, max_lu_unit)
     qp_lmin_target = qd_ls_target * 60 
-    st.info(f"Target (EN 806): **{qp_lmin_target:.1f} L/min**")
+
+# AUTO-CORREZIONE DEL PICCO PER GRANDI UTENZE
+_, hourly_flow_opt_pre, total_daily_vol_pre = get_daily_profile_curve(sim_people, sim_type)
+sim_peak_flow_lmin = max(hourly_flow_opt_pre)
+if sim_peak_flow_lmin > qp_lmin_target:
+    qp_lmin_target = sim_peak_flow_lmin
+    st.sidebar.info(f"⚠️ **Autocorrezione:** Il profilo stimato richiede un picco statistico di **{sim_peak_flow_lmin:.1f} L/min**, superiore alle Utenze LU inserite. Dimensionamento basato sul picco reale.")
+else:
+    st.sidebar.info(f"Target (EN 806): **{qp_lmin_target:.1f} L/min**")
 
 st.sidebar.subheader("🔥 3. Generazione")
-recharge_min = st.sidebar.number_input("Tempo Reintegro Target (min)", step=10, min_value=1, key="recharge_min")
+gen_type = st.sidebar.radio("Tecnologia Generatore", ["Pompa di Calore", "Caldaia a Condensazione"])
 
-with st.sidebar.expander("🔋 4. Batterie i-TES", expanded=True):
-    
-    enable_autopilot = st.toggle("🤖 Attiva Modalità Autopilota", value=False)
-    
-    if enable_autopilot:
-        
-        if sim_type == "Residenziale":
-            if sim_people < 10:
-                r_q6, r_q12, r_q20, r_q40 = range(6), range(6), [0], [0]
-                hw_rule_str = "i-6 e i-12 (Residenziale < 10 utenti)"
-            else:
-                r_q6, r_q12, r_q20, r_q40 = [0], [0], range(6), range(6)
-                hw_rule_str = "i-20 e i-40 (Condominio $\ge$ 10 utenti)"
-        else:
-            r_q6, r_q12, r_q20, r_q40 = [0], [0], range(6), range(6)
-            hw_rule_str = "i-20 e i-40 (Commerciale/Terziario)"
-
-        st.info(f"💡 Ottimizzazione Automatica attiva.\n\n"
-                f"**Regole impostate:**\n"
-                f"- Edificio **{sim_type}** ({sim_people} utenti): L'algoritmo testerà moduli **{hw_rule_str}**.\n"
-                f"- **Portata:** Coefficiente spinto fino al +50% per cercare il miglior compromesso costo/prestazioni.\n"
-                f"- **Sicurezza:** L'algoritmo scarta le configurazioni che oltrepassano la curva di massima potenza erogabile.")
-        
-        t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True)
-        
-        if st.button("🚀 TROVA CONFIGURAZIONE OTTIMALE"):
-            with st.status("Analisi in corso...", expanded=True) as status:
-                st.write("🔍 Fase 1: Esplorazione hardware e limiti termodinamici...")
-                
-                req_flow = qp_lmin_target
-                valid_hardware = []
-                
-                for fc_test in range(0, 51, 10): 
-                    for q40, q20, q12, q6 in itertools.product(r_q40, r_q20, r_q12, r_q6):
-                        if q40==0 and q20==0 and q12==0 and q6==0: continue
-                        nom_flow_tot = (q6 * NOMINAL_FLOWS[6]) + (q12 * NOMINAL_FLOWS[12]) + (q20 * NOMINAL_FLOWS[20]) + (q40 * NOMINAL_FLOWS[40])
-                        effective_flow = nom_flow_tot * (1 + fc_test / 100.0)
-                        
-                        if effective_flow >= req_flow:
-                            hw_cost = (q6*prices[6]) + (q12*prices[12]) + (q20*prices[20]) + (q40*prices[40])
-                            valid_hardware.append({'cfg': (q6, q12, q20, q40), 'cost': hw_cost, 'fc_test': fc_test})
-                
-                valid_hardware.sort(key=lambda x: (x['cost'], x['fc_test']))
-                candidates = valid_hardware[:20] 
-                
-                st.write(f"✅ Trovate {len(valid_hardware)} opzioni preliminari. Simulo le migliori {len(candidates)}...")
-                
-                best_solution = None
-                _, hourly_flow_opt, _ = get_daily_profile_curve(sim_people, sim_type)
-                x_time_opt = np.arange(1440)
-                flow_list_opt = list(hourly_flow_opt) + [hourly_flow_opt[0]]
-                x_h_opt = np.linspace(0, 1440, len(flow_list_opt))
-                f_int_opt = interpolate.interp1d(x_h_opt, flow_list_opt, kind='linear')
-                cons_curve_opt = f_int_opt(x_time_opt)
-
-                recharge_times = [60, 90, 120]
-                start_socs = [30, 50, 70]
-                stop_socs = [90, 100]
-
-                for hw in candidates:
-                    q6, q12, q20, q40 = hw['cfg']
-                    fc_test = hw['fc_test']
-                    e_tot = 0
-                    for q, s in zip([q6, q12, q20, q40], [6, 12, 20, 40]):
-                        v0 = params_v40[s]['V0']
-                        t_pcm_val = t_pcm
-                        if t_pcm_val >= 58: v0 /= 0.76
-                        e_tot += (v0 * 4.186 * dt_target) / 3600.0 * q
-                    
-                    for rt in recharge_times:
-                        p_hp = e_tot / (rt/60.0)
-                        
-                        p_load_opt = qp_lmin_target * dt_target * 0.0697
-                        p_req_batt_opt = max(0, p_load_opt - p_hp)
-                        test_cfg = [(q6, 6), (q12, 12), (q20, 20), (q40, 40)]
-                        s_flows, s_powers, _, _ = get_system_curves(test_cfg, t_pcm_val, dt_target, p_hp, e_tot, fc_test)
-                        if not s_flows: continue
-                        
-                        limit_p = np.interp(qp_lmin_target, s_flows, s_powers)
-                        if p_req_batt_opt >= limit_p:
-                            continue 
-                        
-                        hp_cost = 0
-                        hp_sel = get_suggested_hp(p_hp, t_pcm_val)
-                        if hp_sel: hp_cost = hp_sel[0]['price']
-                        ites_capex = hw['cost'] + hp_cost
-                        
-                        for start_s in start_socs:
-                            for stop_s in stop_socs:
-                                kwh_to_v40 = (3600) / (4.186 * dt_target)
-                                tank_cap_v40 = e_tot * kwh_to_v40
-                                hp_flow_v40 = (p_hp * 60) / (4.186 * dt_target)
-                                curr_v = tank_cap_v40 * 0.5
-                                is_on = False
-                                min_soc = tank_cap_v40
-                                kwh_cons = 0
-                                st_th = tank_cap_v40 * (start_s/100.0)
-                                sp_th = tank_cap_v40 * (stop_s/100.0)
-                                
-                                for _ in range(1440):
-                                    cons = cons_curve_opt[_]
-                                    if not is_on:
-                                        if curr_v < st_th: is_on = True
-                                    else:
-                                        if curr_v >= sp_th: is_on = False
-                                    prod = hp_flow_v40 if is_on else 0
-                                    if is_on: kwh_cons += (p_hp / 60.0)
-                                    curr_v = curr_v - cons + prod
-                                    if curr_v > tank_cap_v40: curr_v = tank_cap_v40
-                                    if curr_v < 0: curr_v = 0
-                                    if curr_v < min_soc: min_soc = curr_v
-                                
-                                if min_soc > 0:
-                                    cop = estimate_cop(t_pcm_val)
-                                    opex = (kwh_cons / cop) * 365 * 0.31
-                                    tco = ites_capex + (opex * 15)
-                                    if best_solution is None or tco < best_solution['tco']:
-                                        best_solution = {
-                                            'tco':tco, 'cfg':hw['cfg'], 'rt':rt, 
-                                            'start':start_s, 'stop':stop_s, 'fc_pct': fc_test
-                                        }
-                
-                status.update(label="Ottimizzazione completata!", state="complete", expanded=False)
-                
-                if best_solution:
-                    st.session_state['pending_opt'] = {
-                        'q6': best_solution['cfg'][0], 'q12': best_solution['cfg'][1],
-                        'q20': best_solution['cfg'][2], 'q40': best_solution['cfg'][3],
-                        'rt': best_solution['rt'], 'start': best_solution['start'], 
-                        'stop': best_solution['stop'], 'fc_pct': best_solution['fc_pct']
-                    }
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error("Nessuna soluzione trovata che rispetti tutti i vincoli. Prova ad aumentare il tempo di reintegro o cambiare utenza.")
-    else:
-        manage_qty('qty_6', "i-6")
-        st.divider()
-        manage_qty('qty_12', "i-12")
-        st.divider()
-        manage_qty('qty_20', "i-20")
-        st.divider()
-        manage_qty('qty_40', "i-40")
-        st.markdown("---")
-        t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True)
-        st.markdown("---")
-        st.session_state.flow_correction_pct = st.number_input("Coeff. Correzione Portata (%)", step=1, value=st.session_state.flow_correction_pct)
-
-# --- CALCOLI PRINCIPALI ---
-config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
-          (st.session_state.qty_20, 20), (st.session_state.qty_40, 40)]
-total_cost = sum(q*prices[s] for q,s in config)
-
-total_energy_e0 = 0
-for qty, size in config:
-    v0_nominal = params_v40[size]['V0']
-    if t_pcm >= 58: v0_nominal /= 0.76 
-    e0_single = (v0_nominal * 4.186 * dt_target) / 3600.0
-    total_energy_e0 += (e0_single * qty)
-
-recharge_hours = st.session_state.recharge_min / 60.0
-p_hp_tot_input = total_energy_e0 / recharge_hours if recharge_hours > 0 and total_energy_e0 > 0 else 0.0
-
-p_load = qp_lmin_target * dt_target * 0.0697
-p_req_batt = max(0, p_load - p_hp_tot_input)
-
-net_power_deficit = p_load - p_hp_tot_input
-if net_power_deficit > 0.1:
-    total_v40_liters = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
-    autonomy_min = total_v40_liters / qp_lmin_target if qp_lmin_target > 0 else 0
-    autonomy_str = f"{autonomy_min:.1f} min"
+if is_industrial:
+    contributo_contestuale = st.sidebar.toggle("⚡ Integrazione Contestuale", value=False, help="Se ON: Il generatore eroga potenza istantanea in aiuto alle batterie durante il picco. Se OFF (standard/sicuro per l'industria): le batterie coprono il picco totalmente da sole, il generatore lavora solo come baseload.")
 else:
-    total_v40_liters = 99999
-    autonomy_str = "∞ (Illimitata)"
-
-_, hourly_flow_opt, _ = get_daily_profile_curve(sim_people, sim_type)
-x_time_opt = np.arange(1440)
-flow_list_opt = list(hourly_flow_opt) + [hourly_flow_opt[0]]
-x_h_opt = np.linspace(0, 1440, len(flow_list_opt))
-f_int_opt = interpolate.interp1d(x_h_opt, flow_list_opt, kind='linear')
-consumption_curve_min = f_int_opt(x_time_opt)
-
-db_to_use = DAIKIN_SANICUBE_DB if is_sanicube else BUFFER_TANK_DB_GENERIC
-tank_target_v40 = total_v40_liters
-suggested_tank, tank_qty, tank_total_vol, tank_total_price = calculate_water_tank_config(tank_target_v40, t_water_set, t_in, db_to_use, is_sanicube)
-
-tank_upsized_for_temp = False
-
-if not is_sanicube and suggested_tank and show_comparison:
-    factor_w = (t_water_set - max(t_in + 5, 20.0)) / (40 - t_in) if (40 - t_in) > 0 else 1
-    if factor_w > 0:
-        hp_recharge_flow_tank = ((p_hp_tot_input * 60) / (4.186 * dt_target)) / factor_w
-        for _loop in range(20):
-            start_v_w = tank_total_vol * 0.8
-            start_s_w = False
-            for _w in range(2): 
-                _, _, temp_accumulo_water, start_v_w, start_s_w, _, _ = run_simulation_step_water(
-                    start_v_w, start_s_w, tank_total_vol, consumption_curve_min, 
-                    hp_recharge_flow_tank, (p_hp_tot_input / 60.0), t_water_set, t_in, factor_w, is_sanicube
-                )
-            
-            if min(temp_accumulo_water) >= 45.0:
-                break
-            else:
-                tank_upsized_for_temp = True
-                tank_target_v40 *= 1.2
-                suggested_tank, tank_qty, tank_total_vol, tank_total_price = calculate_water_tank_config(tank_target_v40, t_water_set, t_in, db_to_use, is_sanicube)
-
-mac_config = {"desc": "N/A", "price": 0, "qty": 0}
-if not is_sanicube and show_comparison:
-    mac_config = get_mac_config(qp_lmin_target)
-
-cost_tooltip = "DETTAGLIO COSTI:\n"
-if total_cost > 0:
-    for qty, size in config:
-        if qty > 0:
-            sub = qty * prices[size]
-            cost_tooltip += f"- {qty}x i-{size}: € {sub:,.0f}\n"
-    cost_tooltip += f"\nTOTALE: € {total_cost:,.0f}"
-else:
-    cost_tooltip = "Nessuna batteria selezionata"
+    contributo_contestuale = True
 
 # --- SIMULAZIONE 24H INPUTS ---
-with st.sidebar.expander("📈 Strategia 24h & PV", expanded=True):
+with st.sidebar.expander("📈 4. Strategia 24h & PV", expanded=True):
     st.markdown("---")
     is_pv_mode = st.toggle("☀️ Attiva Autoconsumo Fotovoltaico", value=False)
     
@@ -759,7 +572,7 @@ with st.sidebar.expander("📈 Strategia 24h & PV", expanded=True):
     pv_coverage = 0
     
     if is_pv_mode:
-        pv_coverage = st.number_input("Copertura PV della PdC (%)", 0, 100, 50, step=10)
+        pv_coverage = st.number_input("Copertura PV del Generatore (%)", 0, 100, 50, step=10)
         st.markdown("**Soglie Intervento (Automatiche)**")
         st.text(f"Avvio con Sole: < {st.session_state.pv_start_sun}%")
         st.text(f"Avvio Notturno: < {st.session_state.pv_start_night}%")
@@ -768,16 +581,287 @@ with st.sidebar.expander("📈 Strategia 24h & PV", expanded=True):
         start_soc_std = st.slider("Avvio Reintegro se carica < (%)", 0, 100, key='std_start')
         stop_soc = st.slider("Stop Reintegro se carica > (%)", 0, 100, key='std_stop')
 
+with st.sidebar.expander("🔋 5. Batterie i-TES", expanded=True):
+    
+    enable_autopilot = st.toggle("🤖 Attiva Modalità Autopilota", value=False)
+    
+    if enable_autopilot:
+        
+        if sim_type == "Residenziale" and sim_people < 10:
+            r_q6, r_q12, r_q20, r_q40 = range(6), range(6), [0], [0]
+            hw_rule_str = "i-6 e i-12 (Residenziale < 10 utenti)"
+        else:
+            max_40 = max(10, min(60, math.ceil(sim_people / 40)))
+            r_q6, r_q12, r_q20, r_q40 = [0], [0], range(6), range(max_40 + 1)
+            hw_rule_str = f"i-20 e i-40 (fino a {max_40} unità i-40 per coprire i grandi picchi)"
+
+        if is_industrial:
+            st.info(f"💡 Ottimizzazione Automatica (Modo Industria).\n\n"
+                    f"**Regole impostate:**\n"
+                    f"- Edificio **{sim_type}** ({sim_people} utenti): L'algoritmo testerà moduli **{hw_rule_str}**.\n"
+                    f"- **Portata:** Coefficiente spinto fino al +50% per cercare il miglior compromesso.\n"
+                    f"- **Sicurezza & Baseload:** Verrà calcolato il mix perfetto tra Batterie (per i picchi) e Generatore (per il fabbisogno di base), scartando opzioni sottodimensionate.")
+        else:
+             st.info(f"💡 Ottimizzazione Automatica (Standard).\n\n"
+                    f"**Regole impostate:**\n"
+                    f"- Edificio **{sim_type}** ({sim_people} utenti): L'algoritmo testerà moduli **{hw_rule_str}**.\n"
+                    f"- **Portata:** Coefficiente spinto fino al +50% per cercare il miglior compromesso.\n"
+                    f"- **Ottimizzazione:** L'algoritmo valuterà diversi tempi di ricarica standard (1-2h) per trovare il miglior Break-even.")           
+        
+        t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True)
+        
+        if st.button("🚀 TROVA CONFIGURAZIONE OTTIMALE"):
+            with st.status("Analisi in corso...", expanded=True) as status:
+                st.write("🔍 Fase 1: Esplorazione hardware per gestione picchi...")
+                
+                req_flow = qp_lmin_target
+                valid_hardware = []
+                
+                for fc_test in range(0, 51, 10): 
+                    for q40, q20, q12, q6 in itertools.product(r_q40, r_q20, r_q12, r_q6):
+                        if q40==0 and q20==0 and q12==0 and q6==0: continue
+                        nom_flow_tot = (q6 * NOMINAL_FLOWS[6]) + (q12 * NOMINAL_FLOWS[12]) + (q20 * NOMINAL_FLOWS[20]) + (q40 * NOMINAL_FLOWS[40])
+                        effective_flow = nom_flow_tot * (1 + fc_test / 100.0)
+                        
+                        if effective_flow >= req_flow:
+                            hw_cost = (q6*prices[6]) + (q12*prices[12]) + (q20*prices[20]) + (q40*prices[40])
+                            valid_hardware.append({'cfg': (q6, q12, q20, q40), 'cost': hw_cost, 'fc_test': fc_test})
+                
+                valid_hardware.sort(key=lambda x: (x['cost'], x['fc_test']))
+                candidates = valid_hardware[:20] 
+                
+                st.write(f"✅ Trovate {len(valid_hardware)} opzioni. Simulo integrazione generatore e cicli termici...")
+                
+                best_solution = None
+                _, hourly_flow_opt, total_daily_vol_opt = get_daily_profile_curve(sim_people, sim_type)
+                x_time_opt = np.arange(1440)
+                flow_list_opt = list(hourly_flow_opt) + [hourly_flow_opt[0]]
+                x_h_opt = np.linspace(0, 1440, len(flow_list_opt))
+                f_int_opt = interpolate.interp1d(x_h_opt, flow_list_opt, kind='linear')
+                cons_curve_opt = f_int_opt(x_time_opt)
+                
+                E_daily_kwh_opt = total_daily_vol_opt * dt_target * 0.00116
+                P_avg_opt = E_daily_kwh_opt / 24.0
+                P_peak_opt = qp_lmin_target * dt_target * 0.0697
+                
+                start_socs = [30, 50, 70]
+                stop_socs = [90, 100]
+
+                for hw in candidates:
+                    q6, q12, q20, q40 = hw['cfg']
+                    fc_test = hw['fc_test']
+                    e_tot = 0
+                    
+                    tot_batt_test = sum([q6, q12, q20, q40])
+                    P_loss_kW_test = 28.1 * tot_batt_test / 1000.0
+                    loss_flow_v40 = (P_loss_kW_test * 60) / (4.186 * dt_target) if dt_target > 0 else 0
+                    
+                    for q, s in zip([q6, q12, q20, q40], [6, 12, 20, 40]):
+                        v0 = params_v40[s]['V0']
+                        t_pcm_val = t_pcm
+                        if t_pcm_val >= 58: v0 /= 0.76
+                        e_tot += (v0 * 4.186 * dt_target) / 3600.0 * q
+                    
+                    if is_industrial:
+                        P_avg_opt_with_loss = P_avg_opt + P_loss_kW_test
+                        p_gen_tests = np.linspace(max(P_avg_opt_with_loss * 1.05, 2.0), max(P_peak_opt, P_avg_opt_with_loss * 2.0), 8)
+                        p_gen_tests_with_rt = [(p, (e_tot / p)*60 if p>0 else 999) for p in p_gen_tests]
+                    else:
+                        p_gen_tests_with_rt = [(e_tot / (rt/60.0), rt) for rt in [60, 90, 120]]
+
+                    for p_gen, rt_val in p_gen_tests_with_rt:
+                        
+                        p_hp_for_v40_opt = p_gen if (not is_industrial or contributo_contestuale) else 0.0
+                        p_req_batt_opt = max(0, P_peak_opt - p_hp_for_v40_opt)
+                        
+                        test_cfg = [(q6, 6), (q12, 12), (q20, 20), (q40, 40)]
+                        s_flows, s_powers, _, _ = get_system_curves(test_cfg, t_pcm_val, dt_target, p_hp_for_v40_opt, e_tot, fc_test)
+                        if not s_flows: continue
+                        
+                        limit_p = np.interp(qp_lmin_target, s_flows, s_powers)
+                        if p_req_batt_opt >= limit_p:
+                            continue 
+                        
+                        hp_cost = 0
+                        hp_sel = get_suggested_generator(p_gen, t_pcm_val, gen_type)
+                        if hp_sel: hp_cost = hp_sel['qty'] * hp_sel['gen']['price']
+                        else: continue
+                        
+                        ites_capex = hw['cost'] + hp_cost
+                        
+                        for start_s in start_socs:
+                            for stop_s in stop_socs:
+                                kwh_to_v40 = (3600) / (4.186 * dt_target)
+                                tank_cap_v40 = e_tot * kwh_to_v40
+                                hp_flow_v40 = (p_gen * 60) / (4.186 * dt_target)
+                                curr_v = tank_cap_v40 * 0.5
+                                is_on = False
+                                min_soc = tank_cap_v40
+                                kwh_cons = 0
+                                st_th = tank_cap_v40 * (start_s/100.0)
+                                sp_th = tank_cap_v40 * (stop_s/100.0)
+                                
+                                for _ in range(1440):
+                                    cons = cons_curve_opt[_]
+                                    if not is_on:
+                                        if curr_v < st_th: is_on = True
+                                    else:
+                                        if curr_v >= sp_th: is_on = False
+                                    
+                                    prod = hp_flow_v40 if is_on else 0
+                                    if is_on: kwh_cons += (p_gen / 60.0)
+                                    curr_v = curr_v - cons - loss_flow_v40 + prod
+                                    if curr_v > tank_cap_v40: curr_v = tank_cap_v40
+                                    if curr_v < 0: curr_v = 0
+                                    if curr_v < min_soc: min_soc = curr_v
+                                
+                                if min_soc > 0:
+                                    if gen_type == "Pompa di Calore":
+                                        eff = estimate_cop(t_pcm_val)
+                                        opex = (kwh_cons / eff) * 365 * 0.31
+                                    else:
+                                        eff = 1.05 if t_pcm_val < 60 else 0.98
+                                        opex = (kwh_cons / eff) * 365 * 0.11
+                                    
+                                    tco = ites_capex + (opex * 15)
+                                    if best_solution is None or tco < best_solution['tco']:
+                                        rt_eq = (e_tot / p_gen) * 60 if p_gen > 0 else 999
+                                        best_solution = {
+                                            'tco':tco, 'cfg':hw['cfg'], 'rt': int(rt_val), 
+                                            'start':start_s, 'stop':stop_s, 'fc_pct': fc_test
+                                        }
+                
+                status.update(label="Ottimizzazione completata!", state="complete", expanded=False)
+                
+                if best_solution:
+                    st.session_state['pending_opt'] = {
+                        'q6': best_solution['cfg'][0], 'q12': best_solution['cfg'][1],
+                        'q20': best_solution['cfg'][2], 'q40': best_solution['cfg'][3],
+                        'rt': best_solution['rt'], 'start': best_solution['start'], 
+                        'stop': best_solution['stop'], 'fc_pct': best_solution['fc_pct']
+                    }
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error("Nessuna soluzione trovata che rispetti tutti i vincoli termodinamici. Riprova con parametri diversi.")
+    else:
+        manage_qty('qty_6', "i-6")
+        st.divider()
+        manage_qty('qty_12', "i-12")
+        st.divider()
+        manage_qty('qty_20', "i-20")
+        st.divider()
+        manage_qty('qty_40', "i-40")
+        st.markdown("---")
+        t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True)
+        st.markdown("---")
+        recharge_min = st.number_input("Tempo Reintegro Target (min)", step=10, min_value=1, value=st.session_state.recharge_min)
+        st.session_state.recharge_min = recharge_min
+        st.session_state.flow_correction_pct = st.number_input("Coeff. Correzione Portata (%)", step=1, value=st.session_state.flow_correction_pct)
+
+# --- CALCOLI PRINCIPALI ---
+config = [(st.session_state.qty_6, 6), (st.session_state.qty_12, 12), 
+          (st.session_state.qty_20, 20), (st.session_state.qty_40, 40)]
+total_cost = sum(q*prices[s] for q,s in config)
+tot_batteries = sum(q for q, s in config)
+
+total_energy_e0 = 0
+for qty, size in config:
+    v0_nominal = params_v40[size]['V0']
+    if t_pcm >= 58: v0_nominal /= 0.76 
+    e0_single = (v0_nominal * 4.186 * dt_target) / 3600.0
+    total_energy_e0 += (e0_single * qty)
+
+P_loss_kW = 28.1 * tot_batteries / 1000.0
+
+p_hp_tot_input = total_energy_e0 / (st.session_state.recharge_min / 60.0) if st.session_state.recharge_min > 0 and total_energy_e0 > 0 else 0.0
+
+if is_industrial:
+    p_hp_for_v40 = p_hp_tot_input if contributo_contestuale else 0.0
+else:
+    p_hp_for_v40 = p_hp_tot_input
+
+p_load = qp_lmin_target * dt_target * 0.0697
+p_req_batt = max(0, p_load - p_hp_for_v40)
+
+net_power_deficit = p_load - p_hp_for_v40
+if net_power_deficit > 0.1:
+    total_v40_liters = (total_energy_e0 / net_power_deficit) * 60 * qp_lmin_target
+    autonomy_min = total_v40_liters / qp_lmin_target if qp_lmin_target > 0 else 0
+    autonomy_str = f"{autonomy_min:.1f} min"
+else:
+    total_v40_liters = 99999
+    autonomy_str = "∞ (Illimitata)"
+
+_, hourly_flow_opt, total_daily_L_calc = get_daily_profile_curve(sim_people, sim_type)
+x_time_opt = np.arange(1440)
+flow_list_opt = list(hourly_flow_opt) + [hourly_flow_opt[0]]
+x_h_opt = np.linspace(0, 1440, len(flow_list_opt))
+f_int_opt = interpolate.interp1d(x_h_opt, flow_list_opt, kind='linear')
+consumption_curve_min = f_int_opt(x_time_opt)
+
+P_avg_daily = (total_daily_L_calc * dt_target * 0.00116) / 24.0 + P_loss_kW
+if is_industrial and not enable_autopilot and p_hp_tot_input < P_avg_daily and p_hp_tot_input > 0:
+    st.warning(f"⚠️ **Attenzione: Generatore Sottodimensionato per il Baseload!** La potenza calcolata del generatore ({p_hp_tot_input:.1f} kW) è inferiore al fabbisogno medio continuo dell'utenza incluse le dispersioni ({P_avg_daily:.1f} kW). Le batterie si scaricheranno. Diminuisci il tempo di reintegro o attivare l'Autopilota.")
+
+db_to_use = DAIKIN_SANICUBE_DB if is_sanicube else BUFFER_TANK_DB_GENERIC
+tank_target_v40 = total_v40_liters if total_v40_liters < 99999 else total_daily_L_calc * 0.8
+suggested_tank, tank_qty, tank_total_vol, tank_total_price = calculate_water_tank_config(tank_target_v40, t_water_set, t_in, db_to_use, is_sanicube)
+
+tank_upsized_for_temp = False
+
+if not is_sanicube and suggested_tank and show_comparison:
+    factor_w = (t_water_set - max(t_in + 5, 20.0)) / (40 - t_in) if (40 - t_in) > 0 else 1
+    if factor_w > 0:
+        hp_recharge_flow_tank = ((p_hp_tot_input * 60) / (4.186 * dt_target)) / factor_w
+        for _loop in range(20):
+            start_v_w = tank_total_vol * 0.8
+            start_s_w = False
+            for _w in range(2): 
+                _, _, temp_accumulo_water, start_v_w, start_s_w, _, _, _ = run_simulation_step_water(
+                    start_v_w, start_s_w, tank_total_vol, consumption_curve_min, 
+                    hp_recharge_flow_tank, (p_hp_tot_input / 60.0), t_water_set, t_in, factor_w, is_sanicube
+                )
+            
+            if min(temp_accumulo_water) >= 45.0:
+                break
+            else:
+                tank_upsized_for_temp = True
+                tank_target_v40 *= 1.2
+                suggested_tank, tank_qty, tank_total_vol, tank_total_price = calculate_water_tank_config(tank_target_v40, t_water_set, t_in, db_to_use, is_sanicube)
+
+mac_config = {"desc": "N/A", "price": 0, "qty": 0}
+if not is_sanicube and show_comparison:
+    mac_config = get_mac_config(qp_lmin_target)
+
+cost_tooltip = "DETTAGLIO COSTI:\n"
+if total_cost > 0:
+    for qty, size in config:
+        if qty > 0:
+            sub = qty * prices[size]
+            cost_tooltip += f"- {qty}x i-{size}: € {sub:,.0f}\n"
+    cost_tooltip += f"\nTOTALE: € {total_cost:,.0f}"
+else:
+    cost_tooltip = "Nessuna batteria selezionata"
+
 # ==========================================
 #  VISUALIZZAZIONE DASHBOARD HEADER E TITOLO
 # ==========================================
 
-# Aggiornamento Titolo Dinamico
-if show_comparison:
-    title_placeholder.title("🚰 Simulatore i-TES: Site-Specific & Confronto Tecnologico")
-else:
-    addr_clean = st.session_state.address_found.replace(" (Default)", "")
-    title_placeholder.title(f"🚰 Simulatore i-TES: Site-Specific - {addr_clean}")
+with title_placeholder.container():
+    col_logo, col_titolo = st.columns([1, 15])
+    with col_logo:
+        try:
+            st.image("logo.png", width=80) 
+        except:
+            st.title("🔋") 
+            
+    with col_titolo:
+        if show_comparison:
+            st.title("Simulatore i-TES: Site-Specific & Confronto Tecnologico")
+        else:
+            addr_clean = st.session_state.address_found.replace(" (Default)", "")
+            st.title(f"Simulatore i-TES: Site-Specific - {addr_clean}")
 
 st.markdown("### 📋 Riepilogo Parametri di Progetto (Setup)")
 utenze_list = []
@@ -799,19 +883,22 @@ st.info(f"""
 - **Profilo Utenza:** {sim_people} Utenti ({sim_type}) | **Temperatura Rete:** {t_in}°C
 - **Utenze Sanitarie:** {utenze_str}
 - **Impostazioni Batteria i-TES:** Temp. PCM **{t_pcm}°C** | Correzione Portata: **{st.session_state.flow_correction_pct:+}%**
-- **Reintegro PdC:** Tempo Target **{recharge_min} min** | Strategia: {strat_str}
+- **Reintegro Gen.:** Tempo Target **{st.session_state.recharge_min} min** | Strategia: {strat_str}
 """)
 st.divider()
 
 st.subheader("📊 Analisi Prestazioni")
 c1, c2, c3 = st.columns(3)
-c1.metric("Portata Target", f"{qp_lmin_target:.1f} L/min")
-c2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota coperta dalla batteria")
+c1.metric("Portata Target Effettiva", f"{qp_lmin_target:.1f} L/min", help="Picco massimo tra normativa EN 806 e stima del Profilo Utenza")
+c2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota di potenza istantanea coperta interamente dalla batteria")
 c3.metric("Autonomia", autonomy_str, help="Durata alla portata di picco")
 
 c1b, c2b, c3b = st.columns(3)
 c1b.metric(f"Salto Termico", f"{dt_target:.1f} °C")
-c2b.metric("Potenza PdC Calc.", f"{p_hp_tot_input:.1f} kW", help=f"Necessaria per ricarica in {recharge_min} min")
+
+help_testo_gen = f"Necessaria per garantire il baseload e ricaricare in {st.session_state.recharge_min} min" if is_industrial else f"Necessaria per ricaricare le batterie in {st.session_state.recharge_min} min"
+c2b.metric("Potenza Gen. Calc.", f"{p_hp_tot_input:.1f} kW", help=help_testo_gen)
+
 val_v40_disp = f"{total_v40_liters:.0f} L" if total_v40_liters < 99999 else "∞"
 c3b.metric("Volume V40 Totale", val_v40_disp)
 
@@ -842,16 +929,12 @@ if suggested_tank:
         vol_single_tank = math.pi * (radius_dm**2) * height_dm 
         tank_physical_vol_L = vol_single_tank * tank_qty
 
-valid_hps_ites = get_suggested_hp(p_hp_tot_input, t_pcm)
-hp_ites_sel = valid_hps_ites[0] if valid_hps_ites else None
-
-valid_hps_water = get_suggested_hp(p_hp_tot_input, t_water_set + 5)
-hp_water_sel = valid_hps_water[0] if valid_hps_water else None
-
-hp_ites_price = hp_ites_sel['price'] if hp_ites_sel else 0
+gen_ites = get_suggested_generator(p_hp_tot_input, t_pcm, gen_type)
+hp_ites_price = gen_ites['qty'] * gen_ites['gen']['price'] if gen_ites else 0
 total_system_ites_cost = total_cost + hp_ites_price
 
-hp_water_price = hp_water_sel['price'] if hp_water_sel else 0
+gen_water = get_suggested_generator(p_hp_tot_input, t_water_set + 5, gen_type)
+hp_water_price = gen_water['qty'] * gen_water['gen']['price'] if gen_water else 0
 total_system_water_cost = tank_total_price + hp_water_price + mac_config['price']
 
 if show_comparison:
@@ -864,12 +947,12 @@ if show_comparison:
                 f"**Dettaglio Costo Batterie:**\n{batt_detail_str}\n"
                 f"**Costo Batterie Totale:** € {total_cost:,.0f}\n\n"
                 f"---\n"
-                f"**Pompa di Calore Suggerita:**\n"
-                f"{hp_ites_sel['brand'] if hp_ites_sel else 'N/A'} {hp_ites_sel['model'] if hp_ites_sel else ''}\n"
-                f"- Potenza: {hp_ites_sel['kw'] if hp_ites_sel else '-'} kW\n"
-                f"- Gas: {hp_ites_sel['gas'] if hp_ites_sel else '-'}\n"
-                f"- Max T: {hp_ites_sel.get('max_t','-') if hp_ites_sel else '-'}°C\n"
-                f"- Costo Est.: € {hp_ites_price:,.0f}\n"
+                f"**Generatore Suggerito ({gen_type}):**\n"
+                f"{gen_ites['qty']}x {gen_ites['gen']['brand']} {gen_ites['gen']['model']} " if gen_ites else "N/A"
+                f"\n- Potenza Totale: {gen_ites['qty'] * gen_ites['gen']['kw']:.1f} kW " if gen_ites else ""
+                f"\n- Alimentazione: {gen_ites['gen']['gas']} " if gen_ites else ""
+                f"\n- Max T: {gen_ites['gen'].get('max_t','-')}°C " if gen_ites else ""
+                f"\n- Costo Est.: € {hp_ites_price:,.0f}\n"
                 f"---\n"
                 f"### 💰 TOTALE SISTEMA: € {total_system_ites_cost:,.0f}")
         st.caption("⚠️ Contattare fornitore per conferma")
@@ -885,22 +968,15 @@ if show_comparison:
                        f"**Volume Occupato:** {tank_physical_vol_L:.0f} Litri\n\n"
                        f"**Costo Sanicube:** € {tank_total_price:,.0f}\n\n"
                        f"---\n"
-                       f"**Pompa di Calore Suggerita (T_max > {t_water_set}°C):**\n"
-                       f"{hp_water_sel['brand'] if hp_water_sel else 'N/A'} {hp_water_sel['model'] if hp_water_sel else ''}\n"
-                       f"- Potenza: {hp_water_sel['kw'] if hp_water_sel else '-'} kW\n"
-                       f"- Gas: {hp_water_sel['gas'] if hp_water_sel else '-'}\n"
-                       f"- Max T: {hp_water_sel.get('max_t','-') if hp_water_sel else '-'}°C\n"
-                       f"- Costo Est.: € {hp_water_price:,.0f}\n"
+                       f"**Generatore Suggerito ({gen_type}):**\n"
+                       f"{gen_water['qty']}x {gen_water['gen']['brand']} {gen_water['gen']['model']} " if gen_water else "N/A"
+                       f"\n- Potenza Totale: {gen_water['qty'] * gen_water['gen']['kw']:.1f} kW " if gen_water else ""
+                       f"\n- Alimentazione: {gen_water['gen']['gas']} " if gen_water else ""
+                       f"\n- Max T: {gen_water['gen'].get('max_t','-')}°C " if gen_water else ""
+                       f"\n- Costo Est.: € {hp_water_price:,.0f}\n"
                        f"---\n"
                        f"### 💰 TOTALE SISTEMA: € {total_system_water_cost:,.0f}")
             st.caption("⚠️ Contattare fornitore per conferma")
-            with st.expander("ℹ️ Info Daikin Sanicube"):
-                st.markdown("""
-                Il sistema **Daikin Sanicube** utilizza un accumulo di acqua tecnica (non potabile) con produzione istantanea di ACS.
-                * **Igiene:** Grazie al principio semi-istantaneo, non vi è ristagno di acqua potabile, riducendo drasticamente il rischio Legionella.
-                * **Materiali:** Costruito in materiale plastico, è esente da corrosione.
-                * **Drain-Back:** Può essere integrato con sistemi solari a svuotamento.
-                """)
         else:
             tech_icon = "🛢️"
             st.success(f"### {tech_icon} {comp_target}\n"
@@ -915,12 +991,12 @@ if show_comparison:
                        f"- {mac_config['desc']}\n"
                        f"- Costo Est. MAC: € {mac_config['price']:,.0f}\n\n"
                        f"---\n"
-                       f"**Pompa di Calore Suggerita (T_max > {t_water_set}°C):**\n"
-                       f"{hp_water_sel['brand'] if hp_water_sel else 'N/A'} {hp_water_sel['model'] if hp_water_sel else ''}\n"
-                       f"- Potenza: {hp_water_sel['kw'] if hp_water_sel else '-'} kW\n"
-                       f"- Gas: {hp_water_sel['gas'] if hp_water_sel else '-'}\n"
-                       f"- Max T: {hp_water_sel.get('max_t','-') if hp_water_sel else '-'}°C\n"
-                       f"- Costo Est. PdC: € {hp_water_price:,.0f}\n"
+                       f"**Generatore Suggerito ({gen_type}):**\n"
+                       f"{gen_water['qty']}x {gen_water['gen']['brand']} {gen_water['gen']['model']} " if gen_water else "N/A"
+                       f"\n- Potenza Totale: {gen_water['qty'] * gen_water['gen']['kw']:.1f} kW " if gen_water else ""
+                       f"\n- Alimentazione: {gen_water['gen']['gas']} " if gen_water else ""
+                       f"\n- Max T: {gen_water['gen'].get('max_t','-')}°C " if gen_water else ""
+                       f"\n- Costo Est. Gen.: € {hp_water_price:,.0f}\n"
                        f"---\n"
                        f"### 💰 TOTALE SISTEMA: € {total_system_water_cost:,.0f}")
             st.caption("⚠️ Contattare fornitore per conferma")
@@ -928,17 +1004,6 @@ if show_comparison:
             if tank_upsized_for_temp:
                 st.warning("⚠️ **Vincolo Modulo MAC (T > 45°C):** Per garantire che la temperatura dell'accumulo non scenda mai sotto i 45°C (limite per scambiare calore e produrre ACS in istantanea), il simulatore ha dovuto moltiplicare automaticamente il volume dei volani rispetto al fabbisogno teorico minimo.")
             
-            with st.expander("ℹ️ Nota Tecnica: Temperatura Volano e Volumi"):
-                testo_spiegazione = (
-                    "Il sistema alternativo adotta un serbatoio primario combinato con un preparatore istantaneo. "
-                    "La sicurezza igienica è assicurata dal riscaldamento al volo, il che permette in teoria di abbassare "
-                    f"la temperatura di accumulo (es. 50-55°C) migliorando il COP della Pompa di Calore. "
-                    "Attenzione però: abbassando la temperatura, il salto termico utile a disposizione ($\Delta T$) crolla. "
-                    "Inoltre, la temperatura del puffer non può scendere sotto i 45°C pena il blocco del modulo MAC. "
-                    "Questo obbliga a prevedere capacità volumetriche e ingombri spropositati per poter pareggiare "
-                    "la produzione V40 garantita dalle compatte batterie i-TES."
-                )
-                st.markdown(testo_spiegazione)
 else:
     # STAND-ALONE MODE
     st.info(f"### 🔋 Soluzione i-TES (PCM)\n"
@@ -948,14 +1013,11 @@ else:
             f"**Dettaglio Costo Batterie:**\n{batt_detail_str}\n"
             f"**Costo Batterie Totale:** € {total_cost:,.0f}\n\n"
             f"---\n"
-            f"**Dimensionamento Pompa di Calore (PdC) Richiesta:**\n"
-            f"- Potenza Minima: **{p_hp_tot_input:.1f} kW** (per ricarica in {recharge_min} min)\n"
-            f"- Temp. Max Erogazione: **$\ge$ {t_pcm}°C**\n"
-            f"- Gas Compatibili (es.): **{hp_ites_sel['gas'] if hp_ites_sel else 'R290 / R32'}**\n")
-
-delta_capex_hp = 0
-if hp_ites_sel and hp_water_sel:
-    delta_capex_hp = hp_water_sel['price'] - hp_ites_sel['price']
+            f"**Dimensionamento Generatore ({gen_type}):**\n"
+            f"- Potenza Minima Baseload: **{p_hp_tot_input:.1f} kW** (per ricarica in {st.session_state.recharge_min} min)\n"
+            f"- Unità Consigliate: **{gen_ites['qty']} in parallelo** " if gen_ites else "N/A"
+            f"\n- Temp. Max Erogazione: **$\ge$ {t_pcm}°C**\n"
+            f"- Alimentazione (es.): **{gen_ites['gen']['gas']}** " if gen_ites else "")
 
 # --- TABELLA CONFRONTO INGOMBRI ---
 if show_comparison:
@@ -1051,19 +1113,6 @@ if len(sys_flows) > 0:
         
         fig_ratio.update_layout(xaxis_title="Portata (L/min)", yaxis_title="Ratio V40 / Vol. Fisico", margin=dict(l=20,r=20,t=40,b=20), height=350)
         st.plotly_chart(fig_ratio, use_container_width=True)
-        
-        if show_comparison and not is_sanicube:
-            testo_info = (
-                "**💡 Perché la curva del Volano Termico rimane costante?**\n\n"
-                "A differenza delle batterie i-TES (che hanno un comportamento termodinamico legato alla potenza di scambio del PCM), "
-                "un normale serbatoio inerziale ospita una massa liquida costantemente in temperatura. "
-                "Il preparatore istantaneo preleva questa energia termica attraverso le proprie piastre. "
-                "Finché si resta entro i limiti operativi del preparatore rapido, il salto termico estraibile non subisce cali, "
-                "quindi il rapporto V40 / Volume Fisico non varia con i prelievi. "
-                "Tuttavia, come si nota dal grafico, **l'i-TES compensa abbondantemente questa dinamica** "
-                "offrendo una densità energetica di gran lunga superiore a parità di ingombro in centrale."
-            )
-            st.info(testo_info)
 
 else:
     st.warning("Aggiungi batterie per vedere i grafici.")
@@ -1075,30 +1124,36 @@ with st.expander("📈 Analisi Dettagliata", expanded=True):
     tank_capacity_L = total_v40_liters if total_v40_liters < 99999 else 9999 
     hp_recharge_flow_lmin = (p_hp_tot_input * 60) / (4.186 * dt_target) if dt_target > 0 else 0
     
-    daily_kwh_kwp = get_pvgis_data(st.session_state.lat, st.session_state.lon, datetime.now().month - 1)
-    solar_profile_norm = create_solar_curve_site_specific(st.session_state.lat, st.session_state.lon, daily_kwh_kwp)
-    
-    def run_simulation_step(start_vol, start_hp_state):
+    # Run Full Simulation Logic Definition
+    def run_full_simulation(start_vol, start_hp_state, tank_capacity, hp_recharge_flow, hp_power_kW):
         curr_v = start_vol
         is_hp_on = start_hp_state
         soc_hist = []
         hp_status_hist = []
+        
+        gen_to_user_hist = []
+        gen_to_batt_hist = []
+        batt_to_user_hist = [] 
+        batt_loss_hist = []
+        
         tot_kwh = 0
         sol_kwh = 0
         grd_kwh = 0
         cycle_count = 0
-        kwh_per_m = p_hp_tot_input / 60.0
+        kwh_per_m = hp_power_kW / 60.0
+        
+        loss_L_per_m = (P_loss_kW * 60) / (4.186 * dt_target) if dt_target > 0 else 0
         
         for i in range(1440):
             solar_intensity = solar_profile_norm[i]
             is_sunny = solar_intensity > 0.05 
             
             if is_pv_mode:
-                st_thr = tank_capacity_L * (st.session_state.pv_start_sun/100.0) if is_sunny else tank_capacity_L * (st.session_state.pv_start_night/100.0)
-                sp_thr = tank_capacity_L * (st.session_state.pv_stop/100.0)
+                st_thr = tank_capacity * (st.session_state.pv_start_sun/100.0) if is_sunny else tank_capacity * (st.session_state.pv_start_night/100.0)
+                sp_thr = tank_capacity * (st.session_state.pv_stop/100.0)
             else:
-                st_thr = tank_capacity_L * (st.session_state.std_start/100.0)
-                sp_thr = tank_capacity_L * (st.session_state.std_stop/100.0)
+                st_thr = tank_capacity * (st.session_state.std_start/100.0)
+                sp_thr = tank_capacity * (st.session_state.std_stop/100.0)
             
             cons_L = consumption_curve_min[i]
             
@@ -1111,8 +1166,8 @@ with st.expander("📈 Analisi Dettagliata", expanded=True):
             
             prod_L = 0
             if is_hp_on:
-                prod_L = hp_recharge_flow_lmin
-                kwh_curr = (p_hp_tot_input / 60.0)
+                prod_L = hp_recharge_flow
+                kwh_curr = kwh_per_m
                 tot_kwh += kwh_curr
                 if is_pv_mode and is_sunny:
                     s_part = kwh_curr * (pv_coverage / 100.0) * solar_intensity 
@@ -1122,20 +1177,32 @@ with st.expander("📈 Analisi Dettagliata", expanded=True):
                 else:
                     grd_kwh += kwh_curr
             
-            curr_v = curr_v - cons_L + prod_L
-            if curr_v > tank_capacity_L: curr_v = tank_capacity_L
+            gen_to_u = min(prod_L, cons_L)
+            gen_to_b = max(0, prod_L - cons_L)
+            batt_to_u = max(0, cons_L - prod_L)
+            
+            gen_to_user_hist.append(gen_to_u)
+            gen_to_batt_hist.append(gen_to_b)
+            batt_to_user_hist.append(batt_to_u)
+            batt_loss_hist.append(loss_L_per_m)
+            
+            curr_v = curr_v - cons_L - loss_L_per_m + prod_L
+            if curr_v > tank_capacity: curr_v = tank_capacity
             if curr_v < 0: curr_v = 0
             
             soc_hist.append(curr_v)
             hp_status_hist.append(prod_L)
             
-        return soc_hist, hp_status_hist, curr_v, is_hp_on, tot_kwh, sol_kwh, grd_kwh, cycle_count
+        return soc_hist, hp_status_hist, batt_to_user_hist, gen_to_user_hist, gen_to_batt_hist, batt_loss_hist, curr_v, is_hp_on, tot_kwh, sol_kwh, grd_kwh, cycle_count
 
+    daily_kwh_kwp = get_pvgis_data(st.session_state.lat, st.session_state.lon, datetime.now().month - 1)
+    solar_profile_norm = create_solar_curve_site_specific(st.session_state.lat, st.session_state.lon, daily_kwh_kwp)
+    
     start_vol_guess = tank_capacity_L * 0.5
     start_state_guess = False
     
     for _ in range(10):
-        soc_history, hp_status_history, end_vol, end_state, total_kwh_used, solar_kwh_used, grid_kwh_used, cycle_total = run_simulation_step(start_vol_guess, start_state_guess)
+        soc_history, hp_status_history, batt_contrib_history, gen_to_user_history, gen_to_batt_history, batt_loss_history, end_vol, end_state, total_kwh_used, solar_kwh_used, grid_kwh_used, cycle_total = run_full_simulation(start_vol_guess, start_state_guess, tank_capacity_L, hp_recharge_flow_lmin, p_hp_tot_input)
         if abs(end_vol - start_vol_guess) < (tank_capacity_L * 0.01):
             break
         start_vol_guess = end_vol
@@ -1143,83 +1210,269 @@ with st.expander("📈 Analisi Dettagliata", expanded=True):
     
     cumulative_consumption = np.cumsum(consumption_curve_min)
     cumulative_production = np.cumsum(hp_status_history)
-    initial_soc_val = soc_history[0]
-    total_availability = np.array([initial_soc_val + cp for cp in cumulative_production])
-    y_fill_green = total_availability 
-    y_fill_red = cumulative_consumption 
+    cum_gen_to_user = np.cumsum(gen_to_user_history)
+    cum_batt_to_user = np.cumsum(batt_contrib_history)
+    cum_gen_to_batt = np.cumsum(gen_to_batt_history)
+    cum_batt_loss = np.cumsum(batt_loss_history)
     
     fig_smart = make_subplots(
         rows=2, cols=1, 
-        shared_xaxes=True,
+        shared_xaxes=False, 
         vertical_spacing=0.1,
         row_heights=[0.6, 0.4],
-        specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
+        specs=[[{"secondary_y": True}], [{"secondary_y": True}]]
     )
     
+    # ------------------
+    # ROW 1 (Top Chart)
+    # ------------------
     if is_pv_mode:
         fig_smart.add_trace(go.Scatter(
             x=x_time_opt/60, y=solar_profile_norm * tank_capacity_L,
             mode='lines', fill='tozeroy', name='Produzione PV (Profilo)',
             line=dict(color='yellow', width=0),
             fillcolor='rgba(255, 215, 0, 0.4)',
-            hoverinfo='skip'
+            hoverinfo='skip',
+            legend='legend'
         ), row=1, col=1, secondary_y=True)
     
     fig_smart.add_trace(go.Scatter(
-        x=x_time_opt/60, y=consumption_curve_min,
-        mode='lines', fill='tozeroy', name='Prelievo Istantaneo',
-        line=dict(color='#ff0000', width=1),
-        fillcolor='rgba(255, 0, 0, 0.2)'
+        x=x_time_opt/60, y=gen_to_user_history,
+        mode='lines', name='Gen. ➔ Utenza (Diretto)',
+        line=dict(color='#2ca02c', width=0),
+        stackgroup='flow', fillcolor='rgba(44, 160, 44, 0.7)',
+        hovertemplate='Gen ➔ Utenza: %{y:.1f} L/min<extra></extra>',
+        legendgroup='gen_user',
+        legend='legend'
+    ), row=1, col=1, secondary_y=False)
+
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=batt_contrib_history,
+        mode='lines', name='Batt. ➔ Utenza (Scarica)',
+        line=dict(color='#e67e22', width=0),
+        stackgroup='flow', fillcolor='rgba(230, 126, 34, 0.7)',
+        hovertemplate='Batt ➔ Utenza: %{y:.1f} L/min<extra></extra>',
+        legendgroup='batt_user',
+        legend='legend'
     ), row=1, col=1, secondary_y=False)
     
     fig_smart.add_trace(go.Scatter(
-        x=x_time_opt/60, y=hp_status_history,
-        mode='lines', name='Reintegro PdC',
-        line=dict(color='#2a9d8f', width=2),
-        fill='tozeroy', fillcolor='rgba(42, 157, 143, 0.2)'
+        x=x_time_opt/60, y=gen_to_batt_history,
+        mode='lines', name='Gen. ➔ Batterie (Ricarica)',
+        line=dict(color='#1f77b4', width=0),
+        stackgroup='flow', fillcolor='rgba(31, 119, 180, 0.5)',
+        hovertemplate='Gen ➔ Batterie: %{y:.1f} L/min (Equiv.)<extra></extra>',
+        legendgroup='gen_batt',
+        legend='legend'
     ), row=1, col=1, secondary_y=False)
     
-    fig_smart.add_trace(go.Scatter(x=x_time_opt/60, y=soc_history, mode='lines', name='Carica Batteria (SoC)', line=dict(color='#007acc', width=3)), row=2, col=1)
-    fig_smart.add_trace(go.Scatter(x=x_time_opt/60, y=cumulative_consumption, mode='lines', name='Cumulato Prelievo', line=dict(color='#d62728', width=2)), row=2, col=1)
-    fig_smart.add_trace(go.Scatter(x=x_time_opt/60, y=y_fill_green, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(44, 160, 44, 0.2)', showlegend=False, hoverinfo='skip'), row=2, col=1)
-    fig_smart.add_trace(go.Scatter(x=x_time_opt/60, y=cumulative_production, mode='lines', name='Cumulato Produzione', line=dict(color='#2ca02c', width=2)), row=2, col=1)
-    fig_smart.add_trace(go.Scatter(x=x_time_opt/60, y=y_fill_red, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(214, 39, 40, 0.2)', showlegend=False), row=2, col=1) 
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=batt_loss_history,
+        mode='lines', name='Batt. ➔ Dispersioni',
+        line=dict(color='#8c564b', width=0),
+        stackgroup='flow', fillcolor='rgba(140, 86, 75, 0.7)',
+        hovertemplate='Dispersioni: %{y:.1f} L/min<extra></extra>',
+        legendgroup='batt_disp',
+        legend='legend'
+    ), row=1, col=1, secondary_y=False)
+    
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=consumption_curve_min,
+        mode='lines', name='Prelievo Richiesto (Tetto)',
+        line=dict(color='#ff0000', width=2),
+        hovertemplate='Richiesta Utenza: %{y:.1f} L/min<extra></extra>',
+        legendgroup='user_req',
+        legend='legend'
+    ), row=1, col=1, secondary_y=False)
+
+    # ------------------
+    # ROW 2 (Bottom Chart)
+    # ------------------
+    
+    # Asse Sinistro (Utenza & SoC) - Batt SOTTO, Gen SOPRA
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=cum_batt_to_user,
+        mode='lines', name='Cumul. Batt. ➔ Utenza',
+        line=dict(color='#e67e22', width=0),
+        stackgroup='cum_u', fillcolor='rgba(230, 126, 34, 0.5)',
+        hovertemplate='Cum. Batt➔Utenza: %{y:.0f} L<extra></extra>',
+        legendgroup='batt_user',
+        legend='legend2',
+        showlegend=False
+    ), row=2, col=1, secondary_y=False)
+
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=cum_gen_to_user,
+        mode='lines', name='Cumul. Gen. ➔ Utenza',
+        line=dict(color='#2ca02c', width=0),
+        stackgroup='cum_u', fillcolor='rgba(44, 160, 44, 0.5)',
+        hovertemplate='Cum. Gen➔Utenza: %{y:.0f} L<extra></extra>',
+        legendgroup='gen_user',
+        legend='legend2',
+        showlegend=False
+    ), row=2, col=1, secondary_y=False)
+    
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=cumulative_consumption,
+        mode='lines', name='Volume Prelievo Totale',
+        line=dict(color='#ff0000', width=2),
+        hovertemplate='Prelievo Tot: %{y:.0f} L<extra></extra>',
+        legendgroup='user_req',
+        legend='legend2',
+        showlegend=False
+    ), row=2, col=1, secondary_y=False)
+    
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=soc_history,
+        mode='lines', name='Carica Batteria (SoC)',
+        line=dict(color='#000000', width=2, dash='dot'),
+        hovertemplate='Carica (SoC): %{y:.0f} L<extra></extra>',
+        legend='legend2'
+    ), row=2, col=1, secondary_y=False)
+
+    # Asse Destro (Generatore & Produzione)
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=cum_gen_to_batt,
+        mode='lines', name='Cumul. Gen. ➔ Batterie',
+        line=dict(color='#1f77b4', width=0),
+        stackgroup='cum_gen', fillcolor='rgba(31, 119, 180, 0.4)',
+        hovertemplate='Cum. Gen➔Batterie: %{y:.0f} L<extra></extra>',
+        legendgroup='gen_batt',
+        legend='legend2',
+        showlegend=False
+    ), row=2, col=1, secondary_y=True)
+
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=cum_batt_loss,
+        mode='lines', name='Cumul. Batt. ➔ Dispersioni',
+        line=dict(color='#8c564b', width=0),
+        stackgroup='cum_gen', fillcolor='rgba(140, 86, 75, 0.5)',
+        hovertemplate='Cum. Dispersioni: %{y:.0f} L<extra></extra>',
+        legendgroup='batt_disp',
+        legend='legend2',
+        showlegend=False
+    ), row=2, col=1, secondary_y=True)
+    
+    fig_smart.add_trace(go.Scatter(
+        x=x_time_opt/60, y=cumulative_production,
+        mode='lines', name='Produzione Totale Gen.',
+        line=dict(color='#1b5e20', width=3, dash='dash'),
+        hovertemplate='Prod Tot Gen: %{y:.0f} L<extra></extra>',
+        legend='legend2'
+    ), row=2, col=1, secondary_y=True)
+
+    # Generazione Ticks per Asse X (Numeri per le ore tonde, tacchette vuote per le mezz'ore)
+    x_ticks_vals = np.arange(0, 24.5, 0.5)
+    x_ticks_labels = [str(int(x)) if x % 1 == 0 else " " for x in x_ticks_vals]
 
     fig_smart.update_layout(
-        title=f"Strategia: {recharge_strategy} | PVGIS: {daily_kwh_kwp:.1f} kWh/kWp (Media Mensile)",
-        height=700,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        title=f"Strategia: {recharge_strategy}",
+        height=800,
+        legend=dict(y=1.0, yanchor="top", x=1.08, xanchor="left", title_text="<b>Clicca per nascondere</b>"),
+        legend2=dict(y=0.4, yanchor="top", x=1.08, xanchor="left", title_text="<b>Linee Specifiche</b>"),
+        margin=dict(r=200) # Spazio per le legende separate a destra
     )
     
-    fig_smart.update_xaxes(title_text="Ora del Giorno (0-24h)", row=2, col=1)
-    fig_smart.update_yaxes(title_text="Portata (L/min)", row=1, col=1, secondary_y=False)
-    fig_smart.update_yaxes(title_text="Volume (L)", row=1, col=1, secondary_y=True, range=[0, tank_capacity_L*1.1])
-    fig_smart.update_yaxes(title_text="Volume Cumulato (L)", row=2, col=1)
+    # Asse X Top
+    fig_smart.update_xaxes(
+        title_text="",
+        tickmode='array', tickvals=x_ticks_vals, ticktext=x_ticks_labels, 
+        ticks="outside", showticklabels=True,
+        range=[0, 24], row=1, col=1
+    )
+    
+    # Asse X Bottom
+    fig_smart.update_xaxes(
+        title_text="Ora del Giorno (0-24h)",
+        tickmode='array', tickvals=x_ticks_vals, ticktext=x_ticks_labels, 
+        ticks="outside", showticklabels=True,
+        range=[0, 24], row=2, col=1
+    )
+    
+    # Calcolo tetto massimo UNICO per allineare perfettamente i due assi (Zeri e tutti i Valori)
+    max_vol_tot = max(np.max(cumulative_consumption), np.max(cumulative_production), np.max(soc_history), 1) * 1.05
+
+    # Assi Y
+    fig_smart.update_yaxes(title_text="Portata (L/min)", row=1, col=1, secondary_y=False, rangemode="tozero")
+    if is_pv_mode:
+        fig_smart.update_yaxes(title_text="Volume (L)", row=1, col=1, secondary_y=True, range=[0, tank_capacity_L*1.1], rangemode="tozero")
+        
+    fig_smart.update_yaxes(title_text="Volumi Utenza / Batt. (L)", row=2, col=1, secondary_y=False, range=[0, max_vol_tot], rangemode="tozero")
+    fig_smart.update_yaxes(title_text="Volumi Generatore (L)", row=2, col=1, secondary_y=True, range=[0, max_vol_tot], rangemode="tozero", showgrid=False)
     
     st.plotly_chart(fig_smart, use_container_width=True)
     
-    daily_vol_tot = sim_people * (50 if sim_type == "Residenziale" else (15 if sim_type == "Ufficio" else 80))
+    # --- DIAGRAMMA DI SANKEY ---
+    st.markdown("### 🔄 Bilancio di Flusso Giornaliero")
+    total_consumed = np.sum(consumption_curve_min)
+    total_gen_to_user = np.sum(gen_to_user_history)
+    total_gen_to_batt = np.sum(gen_to_batt_history)
+    total_batt_to_user = np.sum(batt_contrib_history)
+    total_batt_loss = np.sum(batt_loss_history)
+    
+    total_gen_out = total_gen_to_user + total_gen_to_batt
+    total_batt_in = total_gen_to_batt
+    total_batt_out = total_batt_to_user + total_batt_loss
+    
+    fig_sankey = go.Figure(data=[go.Sankey(
+        textfont=dict(size=25, color="black"),
+        node = dict(
+          pad = 25, thickness = 30, line = dict(color = "black", width = 1),
+          label = [
+              f"GENERATORE ({total_gen_out:,.0f} L)", 
+              f"BATTERIE i-TES ({total_batt_in:,.0f} L IN / {total_batt_out:,.0f} L OUT)", 
+              f"UTENZA FINALE ({total_consumed:,.0f} L)",
+              f"DISPERSIONI TERMICHE ({total_batt_loss:,.0f} L)"
+          ],
+          color = ["#2ca02c", "#1f77b4", "#ff0000", "#8c564b"]
+        ),
+        link = dict(
+          source = [0, 0, 1, 1], 
+          target = [2, 1, 2, 3],
+          value = [total_gen_to_user, total_gen_to_batt, total_batt_to_user, total_batt_loss],
+          color = ["rgba(44, 160, 44, 0.4)", "rgba(31, 119, 180, 0.4)", "rgba(230, 126, 34, 0.4)", "rgba(140, 86, 75, 0.4)"],
+          label = ["Gen ➔ Utenza", "Gen ➔ Carica Batt.", "Batt ➔ Utenza", "Batt ➔ Dispersioni"]
+        )
+    )])
+    
+    fig_sankey.update_layout(
+        title_text="<b>Distribuzione dei Volumi V40 Equivalenti [Litri/Giorno]</b>", 
+        height=400
+    )
+    st.plotly_chart(fig_sankey, use_container_width=True)
+    
+    # Testi descrittivi...
     tot_batteries = sum(q for q, s in config)
     nom_flow_parts = [f"{q}x i-{s} ({NOMINAL_FLOWS[s]} L/min cad.)" for q, s in config if q > 0]
     nom_flow_text = ", ".join(nom_flow_parts) if nom_flow_parts else "0 L/min"
     corr_pct = st.session_state.flow_correction_pct
     
-    st.markdown(f"""
-    **ℹ️ Dettagli Profilo di Prelievo:**
-    * **Normativa di Riferimento (Volume Giornaliero):** Il fabbisogno giornaliero totale stimato in **{daily_vol_tot:.0f} Litri** si basa sulle indicazioni della **UNI 9182** per le utenze di tipo {sim_type}.
-    * **Profilo Orario (Forma della Curva):** La distribuzione dei prelievi nelle 24 ore (Curva Rossa) modella statisticamente l'uso tipico (es. picco mattina/sera per il residenziale) facendo riferimento ai **Profili di Carico Standard** derivati dall'appendice informativa della **UNI TS 11300-2**.
-    * **Gestione del Picco di Progetto:** Il picco normativo richiesto di **{qp_lmin_target:.1f} L/min** (UNI EN 806-3) è interamente coperto. Tale prestazione è garantita dall'utilizzo di **{tot_batteries} batterie** con portate nominali base di **{nom_flow_text}**, alle quali viene applicato un coefficiente di correzione della portata del **{corr_pct}%** (un incremento che rientra pienamente nei limiti di sicurezza e scambio termico gestibili dalla batteria).
-    """)
-    
+    if is_industrial:
+        st.markdown(f"""
+        **ℹ️ Dettagli Profilo di Prelievo & Carico di Base (Industria):**
+        * **Normativa di Riferimento (Volume Giornaliero):** Il fabbisogno totale stimato in **{total_daily_L_calc:.0f} Litri** si basa sulle indicazioni della **UNI 9182** per utenze di tipo '{sim_type}'. Il generatore è dimensionato sul *Base-Load* necessario a coprire questo volume durante l'intera giornata.
+        * **Dinamica dei Flussi (Le Aree Colorate):** L'Area Verde (Gen ➔ Utenza) è ora impilata sopra l'Area Arancione (Batt ➔ Utenza) sull'asse di sinistra, mostrando esattamente come si riempie il 100% del fabbisogno. Sull'asse di destra, la linea tratteggiata verde scuro mostra la Produzione Cumulata Totale del Generatore.
+        * **Gestione del Picco di Progetto:** Il picco normativo istantaneo di **{qp_lmin_target:.1f} L/min** (UNI EN 806-3 / Picco Profilo) è interamente coperto dall'energia istantanea delle batterie. La prestazione è garantita dall'utilizzo di **{tot_batteries} batterie** con portate nominali di **{nom_flow_text}**, alle quali viene applicato un fattore di correzione del **{corr_pct}%**.
+        * **Efficienza Termica:** È stata calcolata una dispersione termica costante di **28,1 W per ogni modulo i-TES**, il cui volume equivalente perso (Area Marrone) viene automaticamente compensato dal generatore.
+        """)
+    else:
+        st.markdown(f"""
+        **ℹ️ Dettagli Profilo di Prelievo:**
+        * **Normativa di Riferimento (Volume Giornaliero):** Il fabbisogno totale stimato in **{total_daily_L_calc:.0f} Litri** si basa sulle indicazioni della **UNI 9182** per utenze di tipo '{sim_type}'.
+        * **Dinamica dei Flussi (Le Aree Colorate):** L'Area Verde (Gen ➔ Utenza) è ora impilata sopra l'Area Arancione (Batt ➔ Utenza) sull'asse di sinistra, mostrando esattamente come si riempie il 100% del fabbisogno. Sull'asse di destra, la linea tratteggiata verde scuro mostra la Produzione Cumulata Totale del Generatore.
+        * **Gestione del Picco di Progetto:** Il picco normativo richiesto di **{qp_lmin_target:.1f} L/min** (UNI EN 806-3 / Picco Profilo) è interamente coperto. Tale prestazione è garantita dall'utilizzo di **{tot_batteries} batterie** con portate nominali base di **{nom_flow_text}**, alle quali viene applicato un coefficiente di correzione della portata del **{corr_pct}%** (un incremento che rientra pienamente nei limiti di sicurezza gestibili dalla batteria).
+        * **Efficienza Termica:** È stata calcolata una dispersione termica costante di **28,1 W per ogni modulo i-TES**, il cui volume equivalente perso (Area Marrone) viene automaticamente compensato dal generatore.
+        """)
+
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Energia Totale PdC", f"{total_kwh_used:.1f} kWh/giorno")
+    kpi1.metric(f"Energia Totale Generata", f"{total_kwh_used:.1f} kWh/g")
     if is_pv_mode:
         kpi2.metric("Da Fotovoltaico", f"{solar_kwh_used:.1f} kWh", delta=f"{(solar_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%")
         kpi3.metric("Da Rete", f"{grid_kwh_used:.1f} kWh", delta=f"-{(grid_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%", delta_color="inverse")
     else:
-        kpi2.metric("Da Rete", f"{total_kwh_used:.1f} kWh")
-        kpi3.metric("Autoconsumo", "N/A")
-    kpi4.metric("Cicli ON/OFF", f"{cycle_total}", help="Numero di accensioni giornaliere della Pompa di Calore")
+        kpi2.metric("Da Rete (Gas/Elec)", f"{total_kwh_used:.1f} kWh")
+        kpi3.metric("Autoconsumo PV", "N/A")
+    kpi4.metric("Cicli ON/OFF Generatore", f"{cycle_total}")
 
 # --- CONFRONTO TECNOLOGICO E TABELLE ---
 if show_comparison:
@@ -1237,7 +1490,7 @@ if show_comparison:
         cost_extra_temp = 0
 
         for _ in range(5):
-            soc_water, temp_erogazione_water, temp_accumulo_water, end_v_w, end_s_w, kwh_water_therm, cycles_water = run_simulation_step_water(
+            soc_water, temp_erogazione_water, temp_accumulo_water, end_v_w, end_s_w, kwh_water_therm, cycles_water, tot_water_loss_kwh = run_simulation_step_water(
                 start_v_w, start_s_w, tank_total_vol, consumption_curve_min, 
                 hp_recharge_flow_tank, (p_hp_tot_input / 60.0), t_water_set, t_in, factor_w, is_sanicube
             )
@@ -1256,7 +1509,7 @@ if show_comparison:
 
         fig_comp = make_subplots(
             rows=2, cols=1, 
-            shared_xaxes=True,
+            shared_xaxes=False,
             vertical_spacing=0.1,
             row_heights=[0.5, 0.5],
             subplot_titles=("Stato di Carica (Litri Equivalenti V40)", "Dinamica delle Temperature (°C)")
@@ -1271,6 +1524,20 @@ if show_comparison:
         if not is_sanicube:
             fig_comp.add_trace(go.Scatter(x=x_time_opt/60, y=temp_accumulo_water, mode='lines', name=f'Temp. Interna Puffer', line=dict(color='#2ca02c', width=1, dash='dashdot')), row=2, col=1)
         
+        fig_comp.update_xaxes(
+            title_text="",
+            tickmode='array', tickvals=x_ticks_vals, ticktext=x_ticks_labels, 
+            ticks="outside", showticklabels=True,
+            range=[0, 24], row=1, col=1
+        )
+        
+        fig_comp.update_xaxes(
+            title_text="Ora del Giorno (0-24h)",
+            tickmode='array', tickvals=x_ticks_vals, ticktext=x_ticks_labels, 
+            ticks="outside", showticklabels=True,
+            range=[0, 24], row=2, col=1
+        )
+
         fig_comp.update_layout(title="Confronto Dinamico Completo", height=700)
         fig_comp.update_yaxes(title_text="Volume (L)", row=1, col=1)
         fig_comp.update_yaxes(title_text="Temperatura (°C)", row=2, col=1)
@@ -1279,67 +1546,76 @@ if show_comparison:
         if not is_sanicube:
             testo_dinamica = (
                 "💡 **Dinamica Termica del Volano:** La linea verde punteggiata mostra la temperatura reale all'interno del puffer. "
-                "Ad ogni prelievo, l'acqua fredda in ingresso abbassa la temperatura media del serbatoio, costringendo la Pompa di Calore "
+                "Ad ogni prelievo, l'acqua fredda in ingresso abbassa la temperatura media del serbatoio, costringendo il Generatore "
                 "a frequenti riaccensioni per ripristinare il setpoint. L'i-TES, invece, cede calore a temperatura costante sfruttando il "
-                "cambiamento di fase, azzerando questi sbalzi e riducendo drasticamente le accensioni (cicli) della PdC."
+                "cambiamento di fase, azzerando questi sbalzi e riducendo drasticamente le accensioni (cicli) del generatore."
             )
             st.info(testo_dinamica)
         
-        cop_pcm = estimate_cop(t_pcm)
-        cop_water = estimate_cop(t_water_set)
-        elec_price = 0.31
-        cost_per_cycle = 0.15
-        startup_penalty_kwh = 0.05
+        if gen_type == "Pompa di Calore":
+            eff_pcm = estimate_cop(t_pcm)
+            eff_water = estimate_cop(t_water_set)
+            energy_price = 0.31
+            startup_penalty = 0.05
+            cost_per_cycle = 0.15
+            energy_name = "Energia Elettrica (kWh_e)"
+        else:
+            eff_pcm = 1.05 if t_pcm < 60 else 0.98
+            eff_water = 1.05 if t_water_set < 60 else 0.95
+            energy_price = 0.11
+            startup_penalty = 0.01
+            cost_per_cycle = 0.02
+            energy_name = "Energia Termica Primaria (kWh)"
+
+        kwh_energy_pcm_year = (kwh_pcm * 365) / eff_pcm
+        kwh_energy_water_year = (kwh_water_therm * 365) / eff_water
         
-        kwh_elec_pcm_year = (kwh_pcm * 365) / cop_pcm
-        kwh_elec_water_year = (kwh_water_therm * 365) / cop_water
-        
-        pcm_cost_energy = kwh_elec_pcm_year * elec_price
-        water_cost_energy = kwh_elec_water_year * elec_price
+        pcm_cost_energy = kwh_energy_pcm_year * energy_price
+        water_cost_energy = kwh_energy_water_year * energy_price
         
         delta_cycles_year = (cycles_water - cycles_pcm) * 365
         saving_energy_year = water_cost_energy - pcm_cost_energy
         saving_maint_year = delta_cycles_year * cost_per_cycle
-        saving_startup_elec_year = delta_cycles_year * startup_penalty_kwh * elec_price
+        saving_startup_elec_year = delta_cycles_year * startup_penalty * energy_price
         total_saving_year = saving_energy_year + saving_maint_year + saving_startup_elec_year
         
         if t_water_set > t_pcm:
-            cost_extra_temp = (((kwh_pcm * 365) / cop_water) - ((kwh_pcm * 365) / cop_pcm)) * elec_price
+            cost_extra_temp = (((kwh_pcm * 365) / eff_water) - ((kwh_pcm * 365) / eff_pcm)) * energy_price
 
         st.markdown("### 📊 Dettaglio Consumi Assoluti (Stima Annuale)")
         
         consumption_data = {
-            "Metrica": ["Energia Termica (kWh_t)", "Energia Elettrica (kWh_e)", "Costo Elettrico (€)", "Costo Start-up (€)", "Costo Manutenzione (€)"],
-            "i-TES (PCM)": [f"{kwh_pcm*365:,.0f}", f"{kwh_elec_pcm_year:,.0f}", f"€ {pcm_cost_energy:,.0f}", f"€ {cycles_pcm * 365 * startup_penalty_kwh * elec_price:,.0f}", "Incluso"],
-            f"{comp_target}": [f"{kwh_water_therm*365:,.0f}", f"{kwh_elec_water_year:,.0f}", f"€ {water_cost_energy:,.0f}", f"€ {cycles_water * 365 * startup_penalty_kwh * elec_price:,.0f}", f"€ {delta_cycles_year * cost_per_cycle:,.0f} (Extra)"],
-            "Differenza (Risparmio)": [f"{(kwh_water_therm-kwh_pcm)*365:,.0f}", f"{(kwh_elec_water_year-kwh_elec_pcm_year):,.0f}", f"€ {saving_energy_year:,.0f}", f"€ {saving_startup_elec_year:,.0f}", f"€ {saving_maint_year:,.0f}"]
+            "Metrica": ["Energia Richiesta (kWh_t)", "Dispersioni Termiche (kWh_t)", energy_name, "Costo Energia (€)", "Costo Start-up (€)", "Costo Manutenzione (€)"],
+            "i-TES (PCM)": [f"{kwh_pcm*365:,.0f}", f"{P_loss_kW * 24 * 365:,.0f}", f"{kwh_energy_pcm_year:,.0f}", f"€ {pcm_cost_energy:,.0f}", f"€ {cycles_pcm * 365 * startup_penalty * energy_price:,.0f}", "Incluso"],
+            f"{comp_target}": [f"{kwh_water_therm*365:,.0f}", f"{tot_water_loss_kwh * 365:,.0f}", f"{kwh_energy_water_year:,.0f}", f"€ {water_cost_energy:,.0f}", f"€ {cycles_water * 365 * startup_penalty * energy_price:,.0f}", f"€ {delta_cycles_year * cost_per_cycle:,.0f} (Extra)"],
+            "Differenza (Risparmio)": [f"{(kwh_water_therm-kwh_pcm)*365:,.0f}", f"{(tot_water_loss_kwh * 365) - (P_loss_kW * 24 * 365):,.0f}", f"{(kwh_energy_water_year-kwh_energy_pcm_year):,.0f}", f"€ {saving_energy_year:,.0f}", f"€ {saving_startup_elec_year:,.0f}", f"€ {saving_maint_year:,.0f}"]
         }
             
         st.table(pd.DataFrame(consumption_data))
         
         st.markdown("### 💰 Riepilogo Risparmio Economico")
         col_res1, col_res2, col_res3, col_res4 = st.columns(4)
-        col_res1.metric("Risp. Elettrico (COP & Disp.)", f"€ {saving_energy_year:,.0f}")
-        col_res2.metric("Risp. Elettrico (Start-up)", f"€ {saving_startup_elec_year:,.0f}")
+        col_res1.metric("Risp. Energia (Efficienza & Disp.)", f"€ {saving_energy_year:,.0f}")
+        col_res2.metric("Risp. Energia (Start-up)", f"€ {saving_startup_elec_year:,.0f}")
         col_res3.metric("Risp. Manutenzione (Usura)", f"€ {saving_maint_year:,.0f}")
         col_res4.metric("TOTALE RISPARMIO ANNUO", f"€ {total_saving_year:,.0f}", delta="Totale", delta_color="normal")
         
-        with st.expander("ℹ️ Dettaglio Risparmio Elettrico (COP & Disp.)"):
+        with st.expander("ℹ️ Dettaglio Risparmio Energetico"):
             st.markdown(f"""
             Questo risparmio combina due fattori fondamentali:
-            1. **Miglior Efficienza (COP):** La PdC per i-TES lavora a {t_pcm}°C (COP {cop_pcm:.2f}), mentre per il sistema alternativo lavora a {t_water_set}°C (COP {cop_water:.2f}).
+            1. **Miglior Efficienza (Resa):** Il generatore per i-TES lavora a {t_pcm}°C (Rendimento {eff_pcm*100:.0f}%), mentre per il sistema alternativo lavora a {t_water_set}°C (Rendimento {eff_water*100:.0f}%).
             2. **Minori Dispersioni:** Mantenere un volume d'acqua enorme sempre ad alta temperatura comporta maggiori perdite termiche rispetto al PCM.
             """)
 
         if cost_extra_temp > 0:
-            with st.expander("ℹ️ Dettaglio Calcolo Penalità COP (Legionella)"):
-                st.markdown(f"La batteria PCM lavora a **{t_pcm}°C**. Il sistema alternativo è mantenuto a **{t_water_set:.1f}°C**.")
+            with st.expander("ℹ️ Dettaglio Calcolo Penalità di Generazione"):
+                st.markdown(f"La batteria PCM lavora a **{t_pcm}°C**. Il sistema alternativo è mantenuto a **{t_water_set:.1f}°C** peggiorando le performance del generatore.")
                 
         with st.expander("ℹ️ Dettaglio Risparmio Manutenzione (Usura)"):
-            st.markdown(f"Il risparmio è calcolato sulla riduzione dello stress meccanico del compressore. Differenza: {delta_cycles_year:,.0f} cicli in meno.")
+            st.markdown(f"Il risparmio è calcolato sulla riduzione dello stress termomeccanico. Differenza: {delta_cycles_year:,.0f} cicli in meno.")
 
-        with st.expander("ℹ️ Dettaglio Risparmio Elettrico (Transitori Start-up)"):
-            st.markdown(f"Ogni avvio necessita di una fase a bassa efficienza. Calcolo: {delta_cycles_year:,.0f} cicli evitati × {startup_penalty_kwh} kWh/ciclo × {elec_price} €/kWh = **€ {saving_startup_elec_year:,.0f}**")
+        with st.expander("ℹ️ Dettaglio Risparmio Energia (Transitori Start-up)"):
+            st.markdown(f"Ogni avvio necessita di una fase a bassa efficienza. Calcolo: {delta_cycles_year:,.0f} cicli evitati × {startup_penalty} kWh/ciclo × {energy_price} € = **€ {saving_startup_elec_year:,.0f}**")
 
         st.markdown("### 💸 Analisi di Break-even (ROI)")
         delta_investment = total_system_ites_cost - total_system_water_cost
