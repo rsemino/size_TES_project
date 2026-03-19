@@ -468,40 +468,80 @@ else:
 
 # --- SEZIONE INPUT UTENTE (Sidebar) ---
 st.sidebar.header("Parametri Progetto")
-with st.sidebar.expander("1. Profilo Utenza", expanded=True):
-    sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
-    sim_type = st.selectbox("Tipo Edificio", ["Residenziale", "Ufficio", "Hotel", "Industria (2 Turni)", "Industria (3 Turni)"])
-    is_industrial = sim_type in ["Industria (2 Turni)", "Industria (3 Turni)"]
-    
-    if is_industrial:
-        st.session_state.shower_window_min = st.selectbox("Finestra Lavaggio Fine Turno (min)", [30, 60, 90, 120, 150, 180, 210, 240], index=1)
+sim_type = st.sidebar.selectbox("Tipo Edificio/Impianto", ["Residenziale", "Ufficio", "Hotel", "Industria (2 Turni)", "Industria (3 Turni)", "Piscina"])
+is_industrial = sim_type in ["Industria (2 Turni)", "Industria (3 Turni)", "Piscina"]
+is_pool = sim_type == "Piscina"
 
-t_in = st.sidebar.number_input("Temp. Acqua Rete (°C)", value=12.5, step=0.5, format="%.1f")
+pool_start_hour = 8
+
+t_in = st.sidebar.number_input("Temp. Acqua Rete/Rabbocco (°C)", value=12.5, step=0.5, format="%.1f")
 dt_target = 40.0 - t_in
 if dt_target <= 0: dt_target = 27.5
 
-with st.sidebar.expander("🏗️ 2. Dettaglio Utenze (LU)", expanded=False):
-    inputs = {}
-    inputs['LU1'] = {'qty': st.number_input("Lavabo (1 LU)", 0, value=0), 'val': 1}
-    inputs['LU2'] = {'qty': st.number_input("Doccia (2 LU)", 0, value=2), 'val': 2}
-    inputs['LU3'] = {'qty': st.number_input("Orinatoio (3 LU)", 0, value=0), 'val': 3}
-    inputs['LU4'] = {'qty': st.number_input("Vasca (4 LU)", 0, value=0), 'val': 4}
-    inputs['LU5'] = {'qty': st.number_input("Giardino (5 LU)", 0, value=0), 'val': 5}
-    inputs['LU8'] = {'qty': st.number_input("Comm. (8 LU)", 0, value=0), 'val': 8}
-    inputs['LU15'] = {'qty': st.number_input("Valvola (15 LU)", 0, value=0), 'val': 15}
-    
-    lu_totali = sum(i['qty']*i['val'] for i in inputs.values()) or 1
-    max_lu_unit = max([i['val'] for i in inputs.values() if i['qty']>0] or [1])
-    
-    qd_ls_target = calcola_qd_en806(lu_totali, max_lu_unit)
-    qp_lmin_target = qd_ls_target * 60 
+if is_pool:
+    with st.sidebar.expander("🏊 1. Dati Piscina", expanded=True):
+        sim_people = 1 # dummy
+        pool_L = st.number_input("Lunghezza Vasca (m)", min_value=1.0, value=10.0, step=1.0)
+        pool_W = st.number_input("Larghezza Vasca (m)", min_value=1.0, value=5.0, step=1.0)
+        pool_D = st.number_input("Profondità Media (m)", min_value=0.5, value=1.5, step=0.1)
+        t_pool = st.number_input("Temp. Desiderata (°C)", min_value=15.0, value=28.0, step=0.5)
+        calo_termico = st.number_input("Calo termico stimato (°C/giorno)", min_value=0.1, value=1.5, step=0.1, help="Perdita termica giornaliera (Evaporazione/Irraggiamento).")
+        
+        pool_vol_m3 = pool_L * pool_W * pool_D
+        pool_vol_L_real = pool_vol_m3 * 1000
+        st.info(f"Volume Fisico Acqua: **{pool_vol_L_real:,.0f} L**")
+        
+        # Traduzione Termica -> V40 Equivalente (Stesso deltaT delle altre utenze per coerenza di calcolo)
+        e_pool_kwh_day = pool_vol_L_real * calo_termico * 0.00116
+        total_daily_L_calc = e_pool_kwh_day / (dt_target * 0.00116)
+        
+        st.session_state.shower_window_min = st.selectbox("Finestra Riscaldamento (Ore/giorno)", [4, 6, 8, 10, 12, 14, 16, 24], index=4) * 60
+        pool_start_hour = st.slider("Ora avvio scambio termico", min_value=0, max_value=23, value=20, format="%d:00", help="Scegli l'orario in cui la piscina assorbe calore. Imposta ore notturne (es. 20:00) per caricare le batterie di giorno col FV e scaricarle di notte.")
 
-# AUTO-CORREZIONE DEL PICCO PER GRANDI UTENZE
-_, hourly_flow_opt_pre, total_daily_L_calc = get_daily_profile_curve(sim_people, sim_type)
+        qp_lmin_target = total_daily_L_calc / st.session_state.shower_window_min
+        
+        lu_totali = 0
+        max_lu_unit = 1
+        utenze_str = f"Piscina {pool_L}x{pool_W}x{pool_D}m"
+        
+        # Dummy variable needed for the rest of the flow
+        hourly_flow_opt_pre = [0]*24
+else:
+    with st.sidebar.expander("1. Profilo Utenza", expanded=True):
+        sim_people = st.number_input("Numero Utenti", min_value=1, value=4, step=1)
+        if is_industrial:
+            st.session_state.shower_window_min = st.selectbox("Finestra Lavaggio Fine Turno (min)", [30, 60, 90, 120, 150, 180, 210, 240], index=1)
+    
+    with st.sidebar.expander("🏗️ 2. Dettaglio Utenze (LU)", expanded=False):
+        inputs = {}
+        inputs['LU1'] = {'qty': st.number_input("Lavabo (1 LU)", 0, value=0), 'val': 1}
+        inputs['LU2'] = {'qty': st.number_input("Doccia (2 LU)", 0, value=2), 'val': 2}
+        inputs['LU3'] = {'qty': st.number_input("Orinatoio (3 LU)", 0, value=0), 'val': 3}
+        inputs['LU4'] = {'qty': st.number_input("Vasca (4 LU)", 0, value=0), 'val': 4}
+        inputs['LU5'] = {'qty': st.number_input("Giardino (5 LU)", 0, value=0), 'val': 5}
+        inputs['LU8'] = {'qty': st.number_input("Comm. (8 LU)", 0, value=0), 'val': 8}
+        inputs['LU15'] = {'qty': st.number_input("Valvola (15 LU)", 0, value=0), 'val': 15}
+        
+        lu_totali = sum(i['qty']*i['val'] for i in inputs.values()) or 1
+        max_lu_unit = max([i['val'] for i in inputs.values() if i['qty']>0] or [1])
+        
+        qd_ls_target = calcola_qd_en806(lu_totali, max_lu_unit)
+        qp_lmin_target = qd_ls_target * 60 
+
+    # AUTO-CORREZIONE DEL PICCO PER GRANDI UTENZE
+    _, hourly_flow_opt_pre, total_daily_L_calc = get_daily_profile_curve(sim_people, sim_type)
 
 x_time_opt = np.arange(1440)
 
-if is_industrial:
+if is_pool:
+    consumption_curve_min = np.zeros(1440)
+    sim_peak_flow_lmin = total_daily_L_calc / st.session_state.shower_window_min
+    start_t = pool_start_hour * 60 
+    for m in range(st.session_state.shower_window_min):
+        idx = (start_t + m) % 1440
+        consumption_curve_min[idx] = sim_peak_flow_lmin
+        
+elif is_industrial:
     num_shifts = 2 if "2 Turni" in sim_type else 3
     vol_per_shift = total_daily_L_calc / num_shifts
     sim_peak_flow_lmin = vol_per_shift / st.session_state.shower_window_min
@@ -523,10 +563,10 @@ else:
         consumption_curve_min = consumption_curve_min * (total_daily_L_calc / c_sum_val)
     sim_peak_flow_lmin = max(consumption_curve_min)
 
-if sim_peak_flow_lmin > qp_lmin_target:
+if sim_peak_flow_lmin > qp_lmin_target and not is_pool:
     qp_lmin_target = sim_peak_flow_lmin
     st.sidebar.info(f"⚠️ **Autocorrezione:** Il calcolo richiede un picco statistico/onda quadra di **{sim_peak_flow_lmin:.1f} L/min**, superiore alle Utenze LU inserite. Dimensionamento basato sul picco reale.")
-else:
+elif not is_pool:
     st.sidebar.info(f"Target (EN 806): **{qp_lmin_target:.1f} L/min**")
 
 st.sidebar.subheader("🔥 3. Generazione")
@@ -583,7 +623,12 @@ with st.sidebar.expander("📈 4. Strategia 24h & PV", expanded=True):
 with st.sidebar.expander("🔋 5. Batterie i-TES", expanded=True):
     
     if is_industrial:
-        st.markdown("### ⚙️ Dimensionamento Industriale Avanzato")
+        if is_pool:
+            st.markdown("### ⚙️ Dimensionamento Avanzato (Piscina)")
+            st.info("Il numero di batterie viene calcolato per immagazzinare il calore (es. di giorno) e rilasciarlo durante le ore di filtrazione.")
+        else:
+            st.markdown("### ⚙️ Dimensionamento Avanzato (Onda Quadra)")
+            st.info("Il numero di batterie viene calcolato per coprire una percentuale esatta del volume richiesto nell'onda quadra di picco.")
         
         t_pcm = st.radio("Temp. PCM (°C)", [48, 58, 74], horizontal=True)
         batt_size = st.selectbox("Taglia Moduli i-TES", [40, 20, 12, 6], index=0)
@@ -609,7 +654,11 @@ with st.sidebar.expander("🔋 5. Batterie i-TES", expanded=True):
         
         max_batt_slider = max(10, qty_ideal * 3)
         
-        st.markdown(f"Volume netto di accumulo richiesto per bilanciare i turni: **{req_vol_net:.0f} L**")
+        if is_pool:
+            st.markdown(f"Volume di accumulo (V40 Eq) per bilanciare il ciclo: **{req_vol_net:.0f} L**")
+        else:
+            v_peak_hour = sum(consumption_curve_min[840:840+st.session_state.shower_window_min]) if num_shifts==2 else sum(consumption_curve_min[360:360+st.session_state.shower_window_min])
+            st.markdown(f"Volume richiesto nell'onda di picco: **{v_peak_hour:.0f} L**")
         
         qty_calc = st.slider("Numero di Batterie i-TES", min_value=1, max_value=int(max_batt_slider), value=int(qty_ideal), help="L'impostazione di default garantisce il bilancio perfetto sulle 24h coprendo il deficit matematico del turno.")
         
@@ -656,7 +705,7 @@ with st.sidebar.expander("🔋 5. Batterie i-TES", expanded=True):
                 break
                 
         st.session_state.ind_p_hp = found_p * 1.02 
-        st.info(f"Generatore Baseload Minimo Calcolato per compensare setup e dispersioni: **{st.session_state.ind_p_hp:.1f} kW**")
+        st.info(f"Generatore Base Minimo Calcolato per compensare dispersioni: **{st.session_state.ind_p_hp:.1f} kW**")
         
     else:
         enable_autopilot = st.toggle("🤖 Attiva Modalità Autopilota", value=False)
@@ -920,27 +969,38 @@ with title_placeholder.container():
             st.title(f"Simulatore i-TES: Site-Specific - {addr_clean}")
 
 st.markdown("### 📋 Riepilogo Parametri di Progetto (Setup)")
-utenze_list = []
-if inputs['LU1']['qty'] > 0: utenze_list.append(f"{inputs['LU1']['qty']}x Lavabo")
-if inputs['LU2']['qty'] > 0: utenze_list.append(f"{inputs['LU2']['qty']}x Doccia")
-if inputs['LU3']['qty'] > 0: utenze_list.append(f"{inputs['LU3']['qty']}x Orinatoio")
-if inputs['LU4']['qty'] > 0: utenze_list.append(f"{inputs['LU4']['qty']}x Vasca")
-if inputs['LU5']['qty'] > 0: utenze_list.append(f"{inputs['LU5']['qty']}x Giardino")
-if inputs['LU8']['qty'] > 0: utenze_list.append(f"{inputs['LU8']['qty']}x Comm.")
-if inputs['LU15']['qty'] > 0: utenze_list.append(f"{inputs['LU15']['qty']}x Valvola")
-utenze_str = ", ".join(utenze_list) if utenze_list else "Nessuna utenza"
+if is_pool:
+    utenze_str = f"Piscina {pool_L}x{pool_W}x{pool_D}m ({pool_vol_L_real:,.0f} L)"
+else:
+    utenze_list = []
+    if inputs['LU1']['qty'] > 0: utenze_list.append(f"{inputs['LU1']['qty']}x Lavabo")
+    if inputs['LU2']['qty'] > 0: utenze_list.append(f"{inputs['LU2']['qty']}x Doccia")
+    if inputs['LU3']['qty'] > 0: utenze_list.append(f"{inputs['LU3']['qty']}x Orinatoio")
+    if inputs['LU4']['qty'] > 0: utenze_list.append(f"{inputs['LU4']['qty']}x Vasca")
+    if inputs['LU5']['qty'] > 0: utenze_list.append(f"{inputs['LU5']['qty']}x Giardino")
+    if inputs['LU8']['qty'] > 0: utenze_list.append(f"{inputs['LU8']['qty']}x Comm.")
+    if inputs['LU15']['qty'] > 0: utenze_list.append(f"{inputs['LU15']['qty']}x Valvola")
+    utenze_str = ", ".join(utenze_list) if utenze_list else "Nessuna utenza"
 
 num_shifts = 2 if "2 Turni" in sim_type else 3
-num_docce = inputs['LU2']['qty']
-y_utenti = int(sim_people / num_shifts) if is_industrial else 0
-z_scaglioni = math.ceil(y_utenti / num_docce) if (is_industrial and num_docce > 0) else 0
+if not is_pool:
+    num_docce = inputs['LU2']['qty']
+    y_utenti = int(sim_people / num_shifts) if is_industrial else 0
+    z_scaglioni = math.ceil(y_utenti / num_docce) if (is_industrial and num_docce > 0) else 0
 
 if is_pv_mode:
     strat_str = f"Fotovoltaico (Avvio Sole < {st.session_state.pv_start_sun}%, Notte < {st.session_state.pv_start_night}%, Stop {st.session_state.pv_stop}%) | 📍 **Località:** {st.session_state.address_found}"
 else:
     strat_str = f"Standard (Avvio < {st.session_state.std_start}%, Stop {st.session_state.std_stop}%)"
 
-if is_industrial:
+if is_pool:
+    st.info(f"""
+    - **Impianto Selezionato:** Piscina a Ciclo Chiuso | **Temperatura Acqua Desiderata:** {t_pool}°C
+    - **Dati Fisici:** {utenze_str} | **Calo Termico:** {calo_termico}°C/giorno
+    - **Impostazioni Batteria i-TES:** Temp. PCM **{t_pcm}°C** | Correzione Portata: **{st.session_state.flow_correction_pct:+}%**
+    - **Dimensionamento:** Bilancio Integrale su Finestra {st.session_state.shower_window_min // 60}h (Avvio ore {pool_start_hour:02d}:00) | Strategia: {strat_str}
+    """)
+elif is_industrial:
     st.info(f"""
     - **Profilo Utenza:** {sim_people} Utenti ({sim_type}) | **Modello Onda Quadra:** {y_utenti} utenti/turno in {z_scaglioni} scaglioni su {num_docce} docce (Finestra {st.session_state.shower_window_min} min).
     - **Utenze Sanitarie:** {utenze_str} | **Temperatura Rete:** {t_in}°C
@@ -958,7 +1018,11 @@ st.divider()
 
 st.subheader("📊 Analisi Prestazioni")
 c1, c2, c3 = st.columns(3)
-c1.metric("Portata Target Effettiva", f"{qp_lmin_target:.1f} L/min", help="Picco massimo tra normativa EN 806 e stima del Profilo Utenza")
+if is_pool:
+    c1.metric("Flusso Scambiatore Eq.", f"{qp_lmin_target:.1f} L/min", help="Portata virtuale necessaria per trasferire l'energia di mantenimento nella finestra impostata.")
+else:
+    c1.metric("Portata Target Effettiva", f"{qp_lmin_target:.1f} L/min", help="Picco massimo tra normativa EN 806 e stima del Profilo Utenza")
+
 c2.metric("Potenza Batt. Req.", f"{p_req_batt:.1f} kW", help="Quota di potenza istantanea coperta interamente dalla batteria")
 c3.metric("Autonomia", autonomy_str, help="Durata alla portata di picco")
 
@@ -1141,6 +1205,7 @@ if len(sys_flows) > 0:
         
         display_max_y = installed_v40 * 3 if installed_v40 > 0 else 10000
         
+        # Correzione del grafico V40 per mostrare la retta perfetta se integrato=OFF
         if not contributo_contestuale:
             plot_v40_vol = [installed_v40] * len(sys_flows)
         else:
@@ -1326,8 +1391,8 @@ with st.expander("📈 Analisi Dettagliata", expanded=True):
     # ------------------
     if is_pv_mode:
         fig_smart.add_trace(go.Scatter(
-            x=x_time_opt/60, y=solar_profile_norm * tank_capacity_L,
-            mode='lines', fill='tozeroy', name='Produzione PV (Profilo)',
+            x=x_time_opt/60, y=solar_profile_norm * 100,
+            mode='lines', fill='tozeroy', name='Profilo FV (%)',
             line=dict(color='yellow', width=0),
             fillcolor='rgba(255, 215, 0, 0.4)',
             hoverinfo='skip',
@@ -1493,25 +1558,39 @@ with st.expander("📈 Analisi Dettagliata", expanded=True):
     # Assi Y
     fig_smart.update_yaxes(title_text="Portata (L/min)", row=1, col=1, secondary_y=False, rangemode="tozero")
     if is_pv_mode:
-        fig_smart.update_yaxes(title_text="Volume (L)", row=1, col=1, secondary_y=True, range=[0, tank_capacity_L*1.1], rangemode="tozero")
+        fig_smart.update_yaxes(title_text="Profilo Solare (%)", row=1, col=1, secondary_y=True, range=[0, 105], rangemode="tozero", showgrid=False)
         
     fig_smart.update_yaxes(title_text="Volumi Utenza / Batt. (L)", row=2, col=1, secondary_y=False, range=[0, max_vol_tot], rangemode="tozero")
     fig_smart.update_yaxes(title_text="Volumi Generatore (L)", row=2, col=1, secondary_y=True, range=[0, max_vol_tot], rangemode="tozero", showgrid=False)
     
     st.plotly_chart(fig_smart, use_container_width=True)
     
-    # --- DIAGRAMMA DI SANKEY ---
-    st.markdown("### 🔄 Bilancio di Flusso Giornaliero")
-    
-    total_gen_to_user = np.sum(gen_to_user_history)
-    total_gen_to_batt = np.sum(gen_to_batt_history)
-    total_batt_to_user = np.sum(batt_contrib_history)
+    # --- BILANCIO MATEMATICO PERFETTO PER SANKEY (Steady-State 24h) ---
+    total_consumed = np.sum(consumption_curve_min)
     total_batt_loss = np.sum(batt_loss_history)
     
+    # Il generatore diretto all'utenza è quello simulato
+    total_gen_to_user = np.sum(gen_to_user_history)
+    if total_gen_to_user > total_consumed: 
+        total_gen_to_user = total_consumed
+        
+    # La batteria DEVE fornire il resto all'utenza per chiudere il bilancio
+    total_batt_to_user = total_consumed - total_gen_to_user
+    
+    # Il generatore DEVE caricare la batteria per compensare scarica + dispersioni
+    total_gen_to_batt = total_batt_to_user + total_batt_loss
+    
+    # Totali Finali Sankey
     total_gen_out = total_gen_to_user + total_gen_to_batt
     total_batt_in = total_gen_to_batt
     total_batt_out = total_batt_to_user + total_batt_loss
     total_received = total_gen_to_user + total_batt_to_user
+    
+    # Energia corrispondente esatta in kWh
+    total_kwh_req = (total_gen_out * 4.186 * dt_target) / 3600.0
+    
+    # --- DIAGRAMMA DI SANKEY ---
+    st.markdown("### 🔄 Bilancio di Flusso Giornaliero")
     
     fig_sankey = go.Figure(data=[go.Sankey(
         textfont=dict(size=25, color="black"),
@@ -1546,31 +1625,44 @@ with st.expander("📈 Analisi Dettagliata", expanded=True):
     nom_flow_text_str = ", ".join(flow_parts_report) if flow_parts_report else "0 L/min"
     corr_pct_val = st.session_state.flow_correction_pct
     
-    if is_industrial:
+    if is_pool:
+        st.markdown(f"""
+        **ℹ️ Dettagli Profilo di Riscaldamento (Piscina):**
+        * **Modello Normativo (Volume Equivalente):** Il calo termico calcolato di {calo_termico}°C/giorno per i {pool_vol_m3:.0f} m³ d'acqua è stato tradotto in un fabbisogno di **{total_daily_L_calc:,.0f} Litri V40 Equivalenti**. Questa traduzione permette di visualizzare il bilancio di massa nel grafico Sankey.
+        * **Profilo di Erogazione Istantaneo:** L'algoritmo spalma l'energia di mantenimento in un'**Onda Quadra** che dura per l'intera Finestra di Riscaldamento selezionata ({st.session_state.shower_window_min // 60} ore, con avvio alle {pool_start_hour:02d}:00). Spostando l'orario nelle ore notturne e attivando l'Autoconsumo FV, puoi forzare le batterie a caricarsi di giorno e scaricarsi di notte.
+        * **Dinamica dei Flussi (Le Aree Colorate):** L'Area Verde (Gen ➔ Piscina) è impilata sopra l'Area Arancione (Batt ➔ Piscina) sull'asse di sinistra, mostrando esattamente come si riempie il fabbisogno. Sull'asse di destra, la linea tratteggiata verde scuro mostra la Produzione Cumulata Totale del Generatore.
+        * **Efficienza Termica:** È stata calcolata una dispersione termica costante di **28,1 W per ogni modulo i-TES**, il cui volume equivalente perso (Area Marrone) viene automaticamente compensato dal generatore per mantenere l'impianto in perfetto equilibrio 24h.
+        """)
+    elif is_industrial:
         st.markdown(f"""
         **ℹ️ Dettagli Profilo di Prelievo & Carico di Base (Industria):**
         * **Normativa di Riferimento (Volume Giornaliero):** Il fabbisogno totale stimato in **{total_daily_L_calc:.0f} Litri** si basa sulle indicazioni della **UNI 9182** per utenze di tipo '{sim_type}'. Il generatore è dimensionato sul *Base-Load* necessario a coprire questo volume durante l'intera giornata.
-        * **Profilo di Erogazione Istantaneo:** L'algoritmo genera un'**Onda Quadra** che simula l'ingresso scaglionato degli utenti alle docce durante il cambio turno.
+        * **Profilo di Erogazione Istantaneo:** L'algoritmo genera un'**Onda Quadra** che simula l'ingresso massiccio e concentrato degli utenti alle docce per l'intera durata della Finestra di Lavaggio ({st.session_state.shower_window_min} min).
         * **Dinamica dei Flussi (Le Aree Colorate):** L'Area Verde (Gen ➔ Utenza) è impilata sopra l'Area Arancione (Batt ➔ Utenza) sull'asse di sinistra, mostrando esattamente come si riempie il fabbisogno. Sull'asse di destra, la linea tratteggiata verde scuro mostra la Produzione Cumulata Totale del Generatore.
-        * **Gestione del Picco di Progetto:** L'algoritmo **"Onda Quadra Integrale"** ha calcolato il volume geometrico esatto mancante all'interno della finestra di prelievo. La prestazione è garantita dall'utilizzo di **{tot_batt_report} batterie** con portate nominali di **{nom_flow_text_str}** e correzione portata del **{corr_pct_val}%**.
-        * **Efficienza Termica:** È stata calcolata una dispersione termica costante di **28,1 W per ogni modulo i-TES**, il cui volume equivalente perso (Area Marrone) viene automaticamente compensato dal generatore per mantenere l'impianto in perfetto equilibrio 24h.
+        * **Gestione del Picco di Progetto:** L'algoritmo ha calcolato il volume geometrico esatto mancante all'interno dell'onda quadra. La prestazione è garantita dall'utilizzo di **{tot_batt_report} batterie** con portate nominali di **{nom_flow_text_str}** e correzione portata del **{corr_pct_val}%**.
+        * **Efficienza Termica:** È stata calcolata una dispersione termica costante di **28,1 W per ogni modulo i-TES**, il cui volume equivalente perso (Area Marrone) viene automaticamente compensato dal generatore.
         """)
     else:
         st.markdown(f"""
         **ℹ️ Dettagli Profilo di Prelievo:**
         * **Normativa di Riferimento (Volume Giornaliero):** Il fabbisogno totale stimato in **{total_daily_L_calc:.0f} Litri** si basa sulle indicazioni della **UNI 9182** per utenze di tipo '{sim_type}'.
-        * **Dinamica dei Flussi (Le Aree Colorate):** La distribuzione dei prelievi (Linea Rossa) fa riferimento ai **Profili di Carico Standard (UNI TS 11300-2)**. L'Area Verde è il contributo diretto del generatore all'utenza. Il picco rimanente è soddisfatto dalle **Batterie i-TES (Area Arancione)**. Quando l'**Area Blu** oltrepassa la curva rossa, il generatore sta ricaricando le batterie. (Sincronizzazione Legende Attiva).
-        * **Gestione del Picco di Progetto:** Il picco normativo richiesto di **{qp_lmin_target:.1f} L/min** (UNI EN 806-3 / Picco Profilo) è interamente coperto. Tale prestazione è garantita dall'utilizzo di **{tot_batt_report} batterie** con portate nominali base di **{nom_flow_text_str}**, alle quali viene applicato un coefficiente di correzione della portata del **{corr_pct_val}%** (un incremento che rientra pienamente nei limiti di sicurezza gestibili dalla batteria).
+        * **Profilo di Erogazione Istantaneo:** L'andamento orario dei prelievi (la curva rossa) è costruito seguendo rigorosamente i **Profili di Carico Standard della normativa UNI TS 11300-2** per la tipologia di edificio selezionata.
+        * **Dinamica dei Flussi (Le Aree Colorate):** La distribuzione dei prelievi (Linea Rossa) fa riferimento ai Profili di Carico. L'Area Verde è il contributo diretto del generatore all'utenza. Il picco rimanente è soddisfatto dalle **Batterie i-TES (Area Arancione)**. Quando l'**Area Blu** oltrepassa la curva rossa, il generatore sta ricaricando le batterie. (Sincronizzazione Legende Attiva).
+        * **Gestione del Picco di Progetto:** Il picco normativo richiesto di **{qp_lmin_target:.1f} L/min** (UNI EN 806-3 / Picco Profilo) è interamente coperto. Tale prestazione è garantita dall'utilizzo di **{tot_batt_report} batterie** con portate nominali base di **{nom_flow_text_str}**, alle quali viene applicato un coefficiente di correzione della portata del **{corr_pct_val}%**.
         * **Efficienza Termica:** È stata calcolata una dispersione termica costante di **28,1 W per ogni modulo i-TES**, il cui volume equivalente perso (Area Marrone) viene automaticamente compensato dal generatore per mantenere l'impianto in perfetto equilibrio 24h.
         """)
 
+    pv_ratio = solar_kwh_used / total_kwh_used if total_kwh_used > 0 else 0
+    solar_kwh_req = total_kwh_req * pv_ratio
+    grid_kwh_req = total_kwh_req - solar_kwh_req
+
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric(f"Energia Totale Generata", f"{total_kwh_used:.1f} kWh/g")
+    kpi1.metric(f"Energia Totale Generata", f"{total_kwh_req:.1f} kWh/g")
     if is_pv_mode:
-        kpi2.metric("Da Fotovoltaico", f"{solar_kwh_used:.1f} kWh", delta=f"{(solar_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%")
-        kpi3.metric("Da Rete", f"{grid_kwh_used:.1f} kWh", delta=f"-{(grid_kwh_used/total_kwh_used)*100:.0f}%" if total_kwh_used>0 else "0%", delta_color="inverse")
+        kpi2.metric("Da Fotovoltaico", f"{solar_kwh_req:.1f} kWh", delta=f"{(pv_ratio)*100:.0f}%" if total_kwh_req>0 else "0%")
+        kpi3.metric("Da Rete", f"{grid_kwh_req:.1f} kWh", delta=f"-{(1-pv_ratio)*100:.0f}%" if total_kwh_req>0 else "0%", delta_color="inverse")
     else:
-        kpi2.metric("Da Rete (Gas/Elec)", f"{total_kwh_used:.1f} kWh")
+        kpi2.metric("Da Rete (Gas/Elec)", f"{total_kwh_req:.1f} kWh")
         kpi3.metric("Autoconsumo PV", "N/A")
     kpi4.metric("Cicli ON/OFF Generatore", f"{cycle_total}")
 
@@ -1597,8 +1689,11 @@ if show_comparison:
             start_v_w = end_v_w
             start_s_w = end_s_w
 
-        kwh_pcm = total_kwh_used
+        kwh_pcm = total_kwh_req
         cycles_pcm = cycle_total
+        
+        # Rigoroso bilancio termico giornaliero per la cisterna (Fabbisogno + Perdite fisse)
+        kwh_water_therm = (total_daily_L_calc * dt_target * 0.00116) + tot_water_loss_kwh
         
         if len(sys_flows) > 0:
             func_temp_pcm = interpolate.interp1d(sys_flows, sys_temps, kind='linear', fill_value="extrapolate")
@@ -1743,24 +1838,25 @@ if show_comparison:
             else: st.info(f"ℹ️ **Investimento a lungo termine.** Rientro in {roi_years:.1f} anni.")
 
 # --- GRAFICO EN 806 ---
-with st.expander("📉 Vedi Grafico Normativo EN 806-3", expanded=False):
-    x_vals = np.logspace(0, 3, 100)
-    y_vals = [calcola_qd_en806(x, max_lu_unit) for x in x_vals]
-    fig_en = go.Figure()
-    fig_en.add_trace(go.Scatter(x=x_vals, y=y_vals, mode='lines', name='Curva Normativa', line=dict(color='#1f77b4', width=2)))
-    
-    fig_en.add_trace(go.Scatter(
-        x=[lu_totali], y=[qd_ls_target], 
-        mode='markers+text', 
-        marker=dict(color='red', size=16, line=dict(color='black', width=2)),
-        text=["Punto Progetto"], textposition="top center",
-        name='Punto Progetto'
-    ))
-    
-    fig_en.update_layout(
-        xaxis_type="log", yaxis_type="log",
-        xaxis_title="Unità di Carico Totali (LU)",
-        yaxis_title="Portata di Progetto (L/s)",
-        title="Curva di Contemporaneità (UNI EN 806-3)"
-    )
-    st.plotly_chart(fig_en, use_container_width=True)
+if not is_pool:
+    with st.expander("📉 Vedi Grafico Normativo EN 806-3", expanded=False):
+        x_vals = np.logspace(0, 3, 100)
+        y_vals = [calcola_qd_en806(x, max_lu_unit) for x in x_vals]
+        fig_en = go.Figure()
+        fig_en.add_trace(go.Scatter(x=x_vals, y=y_vals, mode='lines', name='Curva Normativa', line=dict(color='#1f77b4', width=2)))
+        
+        fig_en.add_trace(go.Scatter(
+            x=[lu_totali], y=[qd_ls_target], 
+            mode='markers+text', 
+            marker=dict(color='red', size=16, line=dict(color='black', width=2)),
+            text=["Punto Progetto"], textposition="top center",
+            name='Punto Progetto'
+        ))
+        
+        fig_en.update_layout(
+            xaxis_type="log", yaxis_type="log",
+            xaxis_title="Unità di Carico Totali (LU)",
+            yaxis_title="Portata di Progetto (L/s)",
+            title="Curva di Contemporaneità (UNI EN 806-3)"
+        )
+        st.plotly_chart(fig_en, use_container_width=True)
